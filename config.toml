@@ -1,0 +1,17 @@
+# PolyMaX v3.1 Configuration
+
+[arxiv]
+categories = ["cs.CV", "cs.LG", "q-bio.QM", "q-bio.GN"]
+max_results = 100
+
+[intern]
+relevance_threshold = 70
+batch_size = 10
+
+[pi]
+max_items_per_run = 10
+
+[polite_mode]
+enabled = true
+vram_threshold = 0.80
+check_interval_seconds = 300

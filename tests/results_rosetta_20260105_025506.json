@@ -1,0 +1,82 @@
+[
+  {
+    "id": "q1",
+    "query": "Systems that minimize energy while maintaining structure",
+    "expanded_query": "Systems that minimize energy while maintaining structure",
+    "status": "PASS",
+    "score": 1.0,
+    "reason": "Found matches: Concept: entropy (Rank 1)..."
+  },
+  {
+    "id": "q2",
+    "query": "Predict full signal from sparse samples",
+    "expanded_query": "Predict full signal from sparse samples OR compressed sensing OR sparse coding OR undersampled OR dropout OR missing data OR low coverage OR spot dropout OR gene expression",
+    "status": "PASS",
+    "score": 1.0,
+    "reason": "Found matches: Concept: compressed_sensing (Rank 1), Concept: sparse_coding (Rank 1)..."
+  },
+  {
+    "id": "q3",
+    "query": "Hierarchical processing of nested structures",
+    "expanded_query": "Hierarchical processing of nested structures",
+    "status": "PASS",
+    "score": 1.0,
+    "reason": "Found matches: Paper: Hierarchical Image Pyramid Transformer (Rank 5), Concept: transformer (Rank 5), Paper: HIPT (Rank 5)..."
+  },
+  {
+    "id": "q4",
+    "query": "Infer hidden variables from indirect measurements",
+    "expanded_query": "Infer hidden variables from indirect measurements OR latent OR unobserved OR underlying OR gene OR protein OR feature OR predict OR estimate",
+    "status": "FAIL",
+    "score": 0.0,
+    "reason": "No expected concepts or papers found in top results"
+  },
+  {
+    "id": "q5",
+    "query": "Optimization on rugged landscapes",
+    "expanded_query": "Optimization on rugged landscapes OR evolution OR adaptation OR fitness maximization",
+    "status": "PASS",
+    "score": 1.0,
+    "reason": "Found matches: Concept: evolution (Rank 5), Concept: evolution (Rank 3), Concept: evolution (Rank 1)..."
+  },
+  {
+    "id": "q6",
+    "query": "Self-organizing spatial structures",
+    "expanded_query": "Self-organizing spatial structures",
+    "status": "PASS",
+    "score": 1.0,
+    "reason": "Found matches: Concept: morphogenesis (Rank 4)..."
+  },
+  {
+    "id": "q7",
+    "query": "Spatial transcriptomics for colorectal cancer",
+    "expanded_query": "Spatial transcriptomics for colorectal cancer",
+    "status": "PASS",
+    "score": 1.0,
+    "reason": "Found matches: Paper: CRC (Rank 2), Paper: spatial (Rank 2), Paper: CRC (Rank 3)..."
+  },
+  {
+    "id": "q8",
+    "query": "Topological data analysis python library",
+    "expanded_query": "Topological data analysis python library",
+    "status": "PASS",
+    "score": 1.0,
+    "reason": "Found matches: Concept: topology (Rank 3), Repo: giotto-tda (Rank 2), Repo: giotto-tda (Rank 1)..."
+  },
+  {
+    "id": "q9",
+    "query": "Active inference agent implementation",
+    "expanded_query": "Active inference agent implementation OR predict OR estimate OR deconvolve OR reconstruct OR bayesian inference OR variational inference",
+    "status": "PASS",
+    "score": 1.0,
+    "reason": "Found matches: Concept: active_inference (Rank 1), Repo: pymdp (Rank 1), Concept: active_inference (Rank 3)..."
+  },
+  {
+    "id": "q10",
+    "query": "Foundation models for computational pathology",
+    "expanded_query": "Foundation models for computational pathology",
+    "status": "PASS",
+    "score": 1.0,
+    "reason": "Found matches: Repo: UNI (Rank 1), Concept: pathology (Rank 1), Concept: pathology (Rank 3)..."
+  }
+]

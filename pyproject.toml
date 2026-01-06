@@ -1,0 +1,32 @@
+[project]
+name = "polymax"
+version = "3.1.0"
+description = "Autonomous research synthesis agent for computational pathology"
+authors = [{name = "Max Van Belkum", email = "max.vanbelkum@vanderbilt.edu"}]
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40.0",
+    "sqlmodel>=0.0.22",
+    "typer[all]>=0.12.0",
+    "textual>=0.85.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "arxiv>=2.1.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.9.0",
+    "apscheduler>=3.10.0",
+]
+
+[project.scripts]
+polymax = "polymax.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "ruff>=0.8.0",
+]

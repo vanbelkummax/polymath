@@ -1,0 +1,51 @@
+# Core dependencies
+chromadb>=0.4.0
+psycopg2-binary>=2.9.0
+neo4j>=5.0.0
+
+# Embeddings and ML
+sentence-transformers>=2.2.0
+torch>=2.0.0
+transformers>=4.30.0
+
+# NLI for evidence extraction
+optimum>=1.0.0
+
+# PDF processing
+pymupdf>=1.22.0
+pdfplumber>=0.9.0
+pytesseract>=0.3.10
+
+# Search and retrieval
+rank-bm25>=0.2.2
+
+# Cross-encoder reranking
+sentence-transformers>=2.2.0
+
+# API clients
+requests>=2.28.0
+aiohttp>=3.8.0
+httpx>=0.24.0
+
+# CLI
+typer>=0.9.0
+rich>=13.0.0
+click>=8.0.0
+
+# MCP server
+mcp>=0.1.0
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+tqdm>=4.65.0
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# Optional: Graph visualization
+# networkx>=3.0.0
+# matplotlib>=3.7.0

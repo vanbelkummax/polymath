@@ -1,0 +1,93 @@
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+chromadb/
+neo4j/
+postgres/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+nohup.out
+*.pid
+
+# Data directories (too large for git)
+data/github_repos/
+data/pdfs/
+ingest_staging/
+ocr_output/
+ocr_extracted/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Large model files
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+
+# Backup files
+*.bak
+*.backup
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml

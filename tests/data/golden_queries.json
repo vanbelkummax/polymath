@@ -1,0 +1,78 @@
+[
+  {
+    "id": "q1",
+    "query": "Systems that minimize energy while maintaining structure",
+    "type": "oblique",
+    "expected_concepts": ["free_energy", "entropy", "active_inference"],
+    "expected_domains": ["Thermodynamics", "Cognitive Science"],
+    "min_relevant_rank": 5
+  },
+  {
+    "id": "q2",
+    "query": "Predict full signal from sparse samples",
+    "type": "oblique",
+    "expected_concepts": ["compressed_sensing", "sparse_coding", "reconstruction"],
+    "min_relevant_rank": 5
+  },
+  {
+    "id": "q3",
+    "query": "Hierarchical processing of nested structures",
+    "type": "oblique",
+    "expected_concepts": ["foundation_model", "transformer"],
+    "expected_papers_keywords": ["HIPT", "Hierarchical Image Pyramid Transformer"],
+    "min_relevant_rank": 5
+  },
+  {
+    "id": "q4",
+    "query": "Infer hidden variables from indirect measurements",
+    "type": "oblique",
+    "expected_concepts": ["active_inference", "bayesian_brain", "variational"],
+    "min_relevant_rank": 5
+  },
+  {
+    "id": "q5",
+    "query": "Optimization on rugged landscapes",
+    "type": "oblique",
+    "expected_concepts": ["evolution", "fitness_landscape", "genetic_algorithm"],
+    "min_relevant_rank": 5
+  },
+  {
+    "id": "q6",
+    "query": "Self-organizing spatial structures",
+    "type": "oblique",
+    "expected_concepts": ["morphogenesis", "reaction_diffusion", "self_organization", "turing_pattern"],
+    "min_relevant_rank": 5
+  },
+  {
+    "id": "q7",
+    "query": "Spatial transcriptomics for colorectal cancer",
+    "type": "direct",
+    "expected_papers_keywords": ["CRC", "colorectal", "spatial"],
+    "expected_repos": ["spatial_CRC_atlas"],
+    "min_relevant_rank": 3
+  },
+  {
+    "id": "q8",
+    "query": "Topological data analysis python library",
+    "type": "direct",
+    "expected_repos": ["giotto-tda"],
+    "expected_concepts": ["persistent_homology", "topology"],
+    "min_relevant_rank": 3
+  },
+  {
+    "id": "q9",
+    "query": "Active inference agent implementation",
+    "type": "direct",
+    "expected_repos": ["pymdp"],
+    "expected_concepts": ["active_inference", "markov_blanket"],
+    "min_relevant_rank": 3
+  },
+  {
+    "id": "q10",
+    "query": "Foundation models for computational pathology",
+    "type": "direct",
+    "expected_repos": ["UNI", "CONCH", "HIPT"],
+    "expected_concepts": ["foundation_model", "pathology"],
+    "min_relevant_rank": 3
+  }
+]

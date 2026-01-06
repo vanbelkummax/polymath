@@ -1,0 +1,908 @@
+[
+  {
+    "id": "q1",
+    "query": "Systems that minimize energy while maintaining structure",
+    "expected_terms": [
+      "free_energy",
+      "entropy",
+      "active_inference",
+      "Thermodynamics",
+      "Cognitive Science"
+    ],
+    "min_relevant_rank": 5,
+    "min_expected_hits": 1,
+    "hits": [
+      "Thermodynamics",
+      "entropy"
+    ],
+    "hit_count": 2,
+    "result_ids": [
+      "doc_20154",
+      "doc_8489",
+      "doc_57418",
+      "doc_20165",
+      "ca4cf81dcc_6",
+      "a76cd9fb84_16",
+      "doc_39822",
+      "doc_31051",
+      "doc_20167",
+      "doc_57409"
+    ],
+    "results": [
+      {
+        "id": "doc_20154",
+        "title": "vary at the same time with",
+        "score": 0.01639344262295082,
+        "source": "vector"
+      },
+      {
+        "id": "doc_8489",
+        "title": "Optimal self-organization",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "doc_57418",
+        "title": "ribes the minimization",
+        "score": 0.015873015873015872,
+        "source": "vector"
+      },
+      {
+        "id": "doc_20165",
+        "title": "tter with the",
+        "score": 0.015625,
+        "source": "vector"
+      },
+      {
+        "id": "ca4cf81dcc_6",
+        "title": "The second functional E, is simply the restriction of E to piecewise constant",
+        "score": 0.015384615384615385,
+        "source": "vector"
+      },
+      {
+        "id": "a76cd9fb84_16",
+        "title": ". His first wire wheel had many and varied numbers of spokes. I probed mathematically for generalized",
+        "score": 0.015151515151515152,
+        "source": "vector"
+      },
+      {
+        "id": "doc_39822",
+        "title": "are allowed and, in particular, our ability",
+        "score": 0.014925373134328358,
+        "source": "vector"
+      },
+      {
+        "id": "doc_31051",
+        "title": "can be described through the design stance in a func-",
+        "score": 0.014705882352941176,
+        "source": "vector"
+      },
+      {
+        "id": "doc_20167",
+        "title": ". Amongst the different",
+        "score": 0.014492753623188406,
+        "source": "vector"
+      },
+      {
+        "id": "doc_57409",
+        "title": "ee-field projection",
+        "score": 0.014285714285714285,
+        "source": "vector"
+      }
+    ]
+  },
+  {
+    "id": "q2",
+    "query": "Predict full signal from sparse samples",
+    "expected_terms": [
+      "compressed_sensing",
+      "sparse_coding",
+      "reconstruction"
+    ],
+    "min_relevant_rank": 5,
+    "min_expected_hits": 1,
+    "hits": [
+      "compressed_sensing"
+    ],
+    "hit_count": 1,
+    "result_ids": [
+      "doc_71439",
+      "doc_71437",
+      "doc_71452",
+      "c24a290b97479e56b995080897458d08",
+      "doc_71436",
+      "doc_71438",
+      "doc_71440",
+      "doc_71444",
+      "doc_71453",
+      "71c1fd75c86a160ccefd0f816a457b7e"
+    ],
+    "results": [
+      {
+        "id": "doc_71439",
+        "title": "samples that are needed. The noiseless setting ad-",
+        "score": 0.03278688524590164,
+        "source": "vector"
+      },
+      {
+        "id": "doc_71437",
+        "title": "is sparse (i.e. has",
+        "score": 0.03200204813108039,
+        "source": "vector"
+      },
+      {
+        "id": "doc_71452",
+        "title": "Two insights from the \ufb01eld of compressed sensing are",
+        "score": 0.031754032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "c24a290b97479e56b995080897458d08",
+        "title": "Unknown",
+        "score": 0.03057889822595705,
+        "source": "vector"
+      },
+      {
+        "id": "doc_71436",
+        "title": "arXiv:1001.4295v1  [cs.IT]  25 Jan 2010",
+        "score": 0.03055037313432836,
+        "source": "vector"
+      },
+      {
+        "id": "doc_71438",
+        "title": "In Section III we show that if the sampling matrix A",
+        "score": 0.030536130536130537,
+        "source": "vector"
+      },
+      {
+        "id": "doc_71440",
+        "title": "le, with high probability, for any",
+        "score": 0.030536130536130537,
+        "source": "vector"
+      },
+      {
+        "id": "doc_71444",
+        "title": "maps each of the",
+        "score": 0.02877846790890269,
+        "source": "vector"
+      },
+      {
+        "id": "doc_71453",
+        "title": "UCB/EECS-2008-3, Jan. 2008.",
+        "score": 0.02877846790890269,
+        "source": "vector"
+      },
+      {
+        "id": "71c1fd75c86a160ccefd0f816a457b7e",
+        "title": "Unknown",
+        "score": 0.027692895339954164,
+        "source": "vector"
+      }
+    ]
+  },
+  {
+    "id": "q3",
+    "query": "Hierarchical processing of nested structures",
+    "expected_terms": [
+      "foundation_model",
+      "transformer",
+      "HIPT",
+      "Hierarchical Image Pyramid Transformer"
+    ],
+    "min_relevant_rank": 5,
+    "min_expected_hits": 1,
+    "hits": [
+      "HIPT",
+      "Hierarchical Image Pyramid Transformer",
+      "transformer"
+    ],
+    "hit_count": 3,
+    "result_ids": [
+      "doc_27826",
+      "doc_64608",
+      "doc_64599",
+      "doc_44225",
+      "repo_0164ff9816c81f61_13",
+      "doc_64605",
+      "doc_68496",
+      "doc_31768",
+      "doc_27824",
+      "doc_47940"
+    ],
+    "results": [
+      {
+        "id": "doc_27826",
+        "title": "h as [52] and [100], are",
+        "score": 0.01639344262295082,
+        "source": "vector"
+      },
+      {
+        "id": "doc_64608",
+        "title": "Unknown",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "doc_64599",
+        "title": "to capture the ways in which observed lower-level visual",
+        "score": 0.015873015873015872,
+        "source": "vector"
+      },
+      {
+        "id": "doc_44225",
+        "title": "cal structure also classify the outputs uti-",
+        "score": 0.015625,
+        "source": "vector"
+      },
+      {
+        "id": "repo_0164ff9816c81f61_13",
+        "title": "HIPT",
+        "score": 0.015384615384615385,
+        "source": "vector"
+      },
+      {
+        "id": "doc_64605",
+        "title": "It does this by using its best current model \u2013 at one",
+        "score": 0.015151515151515152,
+        "source": "vector"
+      },
+      {
+        "id": "doc_68496",
+        "title": "e a holistic",
+        "score": 0.014925373134328358,
+        "source": "vector"
+      },
+      {
+        "id": "doc_31768",
+        "title": "ral architecture for next observation.",
+        "score": 0.014705882352941176,
+        "source": "vector"
+      },
+      {
+        "id": "doc_27824",
+        "title": "lection, leading to a possible",
+        "score": 0.014492753623188406,
+        "source": "vector"
+      },
+      {
+        "id": "doc_47940",
+        "title": "Unknown",
+        "score": 0.014285714285714285,
+        "source": "vector"
+      }
+    ]
+  },
+  {
+    "id": "q4",
+    "query": "Infer hidden variables from indirect measurements",
+    "expected_terms": [
+      "active_inference",
+      "bayesian_brain",
+      "variational"
+    ],
+    "min_relevant_rank": 5,
+    "min_expected_hits": 1,
+    "hits": [],
+    "hit_count": 0,
+    "result_ids": [
+      "doc_55929",
+      "doc_40831",
+      "doc_10960",
+      "doc_29671",
+      "doc_55917",
+      "doc_54086",
+      "doc_40829",
+      "doc_40835",
+      "doc_55927",
+      "doc_47077"
+    ],
+    "results": [
+      {
+        "id": "doc_55929",
+        "title": "and Hyv\u00e4rinen, 2009b), the e\ufb00ect Y is further generated by a post-",
+        "score": 0.01639344262295082,
+        "source": "vector"
+      },
+      {
+        "id": "doc_40831",
+        "title": "No. 6A, 3099\u20133132. This reprint di\ufb00ers from the original in",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "doc_10960",
+        "title": "Identifiability of parameters in latent structure models with many observed variables",
+        "score": 0.015873015873015872,
+        "source": "vector"
+      },
+      {
+        "id": "doc_29671",
+        "title": "Yx\u2032,z|W holds",
+        "score": 0.015625,
+        "source": "vector"
+      },
+      {
+        "id": "doc_55917",
+        "title": "A further value",
+        "score": 0.015384615384615385,
+        "source": "vector"
+      },
+      {
+        "id": "doc_54086",
+        "title": "nearly continuous evolution of the available",
+        "score": 0.015151515151515152,
+        "source": "vector"
+      },
+      {
+        "id": "doc_40829",
+        "title": "arXiv:0809.5032v2  [math.ST]  1 Sep 2009",
+        "score": 0.014925373134328358,
+        "source": "vector"
+      },
+      {
+        "id": "doc_40835",
+        "title": "ation map \u03a8, which takes values in M1(\u2126), the set of probability",
+        "score": 0.014705882352941176,
+        "source": "vector"
+      },
+      {
+        "id": "doc_55927",
+        "title": "ian case, where the involved variables are Gaussian with",
+        "score": 0.014492753623188406,
+        "source": "vector"
+      },
+      {
+        "id": "doc_47077",
+        "title": "is interesting for machine learning,",
+        "score": 0.014285714285714285,
+        "source": "vector"
+      }
+    ]
+  },
+  {
+    "id": "q5",
+    "query": "Optimization on rugged landscapes",
+    "expected_terms": [
+      "evolution",
+      "fitness_landscape",
+      "genetic_algorithm"
+    ],
+    "min_relevant_rank": 5,
+    "min_expected_hits": 1,
+    "hits": [
+      "evolution",
+      "fitness_landscape"
+    ],
+    "hit_count": 2,
+    "result_ids": [
+      "doc_5800",
+      "doc_1748",
+      "doc_5807",
+      "doc_68151",
+      "doc_5894",
+      "doc_4403",
+      "doc_1804",
+      "doc_46883",
+      "doc_4397",
+      "doc_1709"
+    ],
+    "results": [
+      {
+        "id": "doc_5800",
+        "title": "A Survey of Advances in Landscape Analysis for Optimisation",
+        "score": 0.032266458495966696,
+        "source": "vector"
+      },
+      {
+        "id": "doc_1748",
+        "title": "A self-feedback strategy differential evolution with fitness landscape analysis",
+        "score": 0.03125763125763126,
+        "source": "vector"
+      },
+      {
+        "id": "doc_5807",
+        "title": "Heterogeneous Adaptive Trajectories of Small Populations on Complex Fitness Landscapes",
+        "score": 0.01639344262295082,
+        "source": "vector"
+      },
+      {
+        "id": "doc_68151",
+        "title": "s, to models of the subsurface. However, it is worth",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "doc_5894",
+        "title": "Measuring ruggedness in fitness landscapes",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "doc_4403",
+        "title": "Osprey optimization algorithm: A new bio-inspired metaheuristic algorithm for solving engineering optimization problems",
+        "score": 0.015625,
+        "source": "vector"
+      },
+      {
+        "id": "doc_1804",
+        "title": "Evolution of clonal populations approaching a fitness peak",
+        "score": 0.015625,
+        "source": "vector"
+      },
+      {
+        "id": "doc_46883",
+        "title": "laws of physics,",
+        "score": 0.015384615384615385,
+        "source": "vector"
+      },
+      {
+        "id": "doc_4397",
+        "title": "Pelican Optimization Algorithm: A Novel Nature-Inspired Algorithm for Engineering Applications",
+        "score": 0.015151515151515152,
+        "source": "vector"
+      },
+      {
+        "id": "doc_1709",
+        "title": "A rugged yet easily navigable fitness landscape",
+        "score": 0.015151515151515152,
+        "source": "vector"
+      }
+    ]
+  },
+  {
+    "id": "q6",
+    "query": "Self-organizing spatial structures",
+    "expected_terms": [
+      "morphogenesis",
+      "reaction_diffusion",
+      "self_organization",
+      "turing_pattern"
+    ],
+    "min_relevant_rank": 5,
+    "min_expected_hits": 1,
+    "hits": [
+      "morphogenesis",
+      "reaction_diffusion"
+    ],
+    "hit_count": 2,
+    "result_ids": [
+      "29d106d8e0_19",
+      "doc_53224",
+      "doc_46174",
+      "913693b4da75824c63bf46ccbcb7af56",
+      "doc_10610",
+      "doc_53232",
+      "doc_8489",
+      "doc_31342",
+      "doc_32813",
+      "doc_46168"
+    ],
+    "results": [
+      {
+        "id": "29d106d8e0_19",
+        "title": "Department of M.I.T., and Dr. Gordon Raisbeck of the Bell",
+        "score": 0.01639344262295082,
+        "source": "vector"
+      },
+      {
+        "id": "doc_53224",
+        "title": "network (Latora and Marchiori, 2001).",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "doc_46174",
+        "title": "If the clustering scheme is functorial in the sense of the preceding example, we",
+        "score": 0.015873015873015872,
+        "source": "vector"
+      },
+      {
+        "id": "913693b4da75824c63bf46ccbcb7af56",
+        "title": "Unknown",
+        "score": 0.015625,
+        "source": "vector"
+      },
+      {
+        "id": "doc_10610",
+        "title": "Connectivity distribution of spatial networks",
+        "score": 0.015384615384615385,
+        "source": "vector"
+      },
+      {
+        "id": "doc_53232",
+        "title": "l., 2010), have been intro\u00ad",
+        "score": 0.015151515151515152,
+        "source": "vector"
+      },
+      {
+        "id": "doc_8489",
+        "title": "Optimal self-organization",
+        "score": 0.014925373134328358,
+        "source": "vector"
+      },
+      {
+        "id": "doc_31342",
+        "title": "ctions, there",
+        "score": 0.014705882352941176,
+        "source": "vector"
+      },
+      {
+        "id": "doc_32813",
+        "title": "topological organization of spontaneous",
+        "score": 0.014492753623188406,
+        "source": "vector"
+      },
+      {
+        "id": "doc_46168",
+        "title": "hoices of coordinates does not require that the coordinate",
+        "score": 0.014285714285714285,
+        "source": "vector"
+      }
+    ]
+  },
+  {
+    "id": "q7",
+    "query": "Spatial transcriptomics for colorectal cancer",
+    "expected_terms": [
+      "CRC",
+      "colorectal",
+      "spatial",
+      "spatial_CRC_atlas"
+    ],
+    "min_relevant_rank": 3,
+    "min_expected_hits": 1,
+    "hits": [
+      "CRC",
+      "colorectal",
+      "spatial"
+    ],
+    "hit_count": 3,
+    "result_ids": [
+      "doc_12300",
+      "304579440d8cece84c775484185367b3",
+      "dea38bafb0ec7481618797d5efe31202",
+      "repo_72527a3f68b2541f_0",
+      "doc_17712",
+      "doc_14382",
+      "doc_79303",
+      "doc_78020",
+      "doc_79332",
+      "8bb6a24b7d7d2f02e51eced8445130ce"
+    ],
+    "results": [
+      {
+        "id": "doc_12300",
+        "title": "Paper: Spatial transcriptomics atlas reveals the crosstalk between cancer-associated fibroblasts and tumor microenvironment components in colorectal cancer.",
+        "score": 0.01639344262295082,
+        "source": "vector"
+      },
+      {
+        "id": "304579440d8cece84c775484185367b3",
+        "title": "Unknown",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "dea38bafb0ec7481618797d5efe31202",
+        "title": "Unknown",
+        "score": 0.015873015873015872,
+        "source": "vector"
+      },
+      {
+        "id": "repo_72527a3f68b2541f_0",
+        "title": "spatial_CRC_atlas",
+        "score": 0.015625,
+        "source": "vector"
+      },
+      {
+        "id": "doc_17712",
+        "title": "1. J Transl Med. 2022 Jul 6;20(1):302. doi: 10.1186/s12967-022-03510-8.",
+        "score": 0.015384615384615385,
+        "source": "vector"
+      },
+      {
+        "id": "doc_14382",
+        "title": "Spatial transcriptomics atlas reveals the crosstalk between cancer-associated fibroblasts and tumor microenvironment components in colorectal cancer.",
+        "score": 0.015151515151515152,
+        "source": "vector"
+      },
+      {
+        "id": "doc_79303",
+        "title": "Single-cell and spatial transcriptome profiling identifies the immunosuppressive spatial niche in &lt;i&gt;KRAS&lt;/i&gt;-mutant colorectal cancer.",
+        "score": 0.014925373134328358,
+        "source": "vector"
+      },
+      {
+        "id": "doc_78020",
+        "title": "TENX)1, Mendeley",
+        "score": 0.014705882352941176,
+        "source": "vector"
+      },
+      {
+        "id": "doc_79332",
+        "title": "A Meta-Review of Spatial Transcriptomics Analysis Software.",
+        "score": 0.014492753623188406,
+        "source": "vector"
+      },
+      {
+        "id": "8bb6a24b7d7d2f02e51eced8445130ce",
+        "title": "Unknown",
+        "score": 0.014285714285714285,
+        "source": "vector"
+      }
+    ]
+  },
+  {
+    "id": "q8",
+    "query": "Topological data analysis python library",
+    "expected_terms": [
+      "persistent_homology",
+      "topology",
+      "giotto-tda"
+    ],
+    "min_relevant_rank": 3,
+    "min_expected_hits": 1,
+    "hits": [
+      "giotto-tda",
+      "topology"
+    ],
+    "hit_count": 2,
+    "result_ids": [
+      "code_54e6b2e6d6cab093_9",
+      "repo_ce174edea5835c8f_15",
+      "doc_10202",
+      "repo_ce174edea5835c8f_44",
+      "doc_45067",
+      "repo_ce174edea5835c8f_81",
+      "doc_45068",
+      "repo_ce174edea5835c8f_79",
+      "repo_ce174edea5835c8f_80",
+      "repo_ce174edea5835c8f_98"
+    ],
+    "results": [
+      {
+        "id": "code_54e6b2e6d6cab093_9",
+        "title": "scikit-learn/related_projects.rst",
+        "score": 0.01639344262295082,
+        "source": "vector"
+      },
+      {
+        "id": "repo_ce174edea5835c8f_15",
+        "title": "giotto-tda",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "doc_10202",
+        "title": "Topology and data",
+        "score": 0.015873015873015872,
+        "source": "vector"
+      },
+      {
+        "id": "repo_ce174edea5835c8f_44",
+        "title": "giotto-tda",
+        "score": 0.015625,
+        "source": "vector"
+      },
+      {
+        "id": "doc_45067",
+        "title": "Otter et al. EPJ Data Science  (2017) 6:17",
+        "score": 0.015384615384615385,
+        "source": "vector"
+      },
+      {
+        "id": "repo_ce174edea5835c8f_81",
+        "title": "giotto-tda",
+        "score": 0.015151515151515152,
+        "source": "vector"
+      },
+      {
+        "id": "doc_45068",
+        "title": "putation of PH with an eye",
+        "score": 0.014925373134328358,
+        "source": "vector"
+      },
+      {
+        "id": "repo_ce174edea5835c8f_79",
+        "title": "giotto-tda",
+        "score": 0.014705882352941176,
+        "source": "vector"
+      },
+      {
+        "id": "repo_ce174edea5835c8f_80",
+        "title": "giotto-tda",
+        "score": 0.014492753623188406,
+        "source": "vector"
+      },
+      {
+        "id": "repo_ce174edea5835c8f_98",
+        "title": "giotto-tda",
+        "score": 0.014285714285714285,
+        "source": "vector"
+      }
+    ]
+  },
+  {
+    "id": "q9",
+    "query": "Active inference agent implementation",
+    "expected_terms": [
+      "active_inference",
+      "markov_blanket",
+      "pymdp"
+    ],
+    "min_relevant_rank": 3,
+    "min_expected_hits": 1,
+    "hits": [
+      "active_inference",
+      "pymdp"
+    ],
+    "hit_count": 2,
+    "result_ids": [
+      "repo_bca340c1ed5c5f80_0",
+      "repo_bca340c1ed5c5f80_105",
+      "repo_bca340c1ed5c5f80_103",
+      "repo_bca340c1ed5c5f80_86",
+      "repo_bca340c1ed5c5f80_34",
+      "doc_59163",
+      "repo_bca340c1ed5c5f80_5",
+      "doc_59164",
+      "repo_bca340c1ed5c5f80_14",
+      "doc_1578"
+    ],
+    "results": [
+      {
+        "id": "repo_bca340c1ed5c5f80_0",
+        "title": "pymdp",
+        "score": 0.031009615384615385,
+        "source": "vector"
+      },
+      {
+        "id": "repo_bca340c1ed5c5f80_105",
+        "title": "pymdp",
+        "score": 0.029273504273504274,
+        "source": "vector"
+      },
+      {
+        "id": "repo_bca340c1ed5c5f80_103",
+        "title": "pymdp",
+        "score": 0.02782608695652174,
+        "source": "vector"
+      },
+      {
+        "id": "repo_bca340c1ed5c5f80_86",
+        "title": "pymdp",
+        "score": 0.027443609022556388,
+        "source": "vector"
+      },
+      {
+        "id": "repo_bca340c1ed5c5f80_34",
+        "title": "pymdp",
+        "score": 0.01639344262295082,
+        "source": "vector"
+      },
+      {
+        "id": "doc_59163",
+        "title": "Advances in Variational Inference",
+        "score": 0.01639344262295082,
+        "source": "vector"
+      },
+      {
+        "id": "repo_bca340c1ed5c5f80_5",
+        "title": "pymdp",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "doc_59164",
+        "title": "Index Terms\u2014Variational inference, approximate Bayesian inference, reparameterization gradients, structured variational approximations,",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "repo_bca340c1ed5c5f80_14",
+        "title": "pymdp",
+        "score": 0.015873015873015872,
+        "source": "vector"
+      },
+      {
+        "id": "doc_1578",
+        "title": "Advances in Variational Inference",
+        "score": 0.015873015873015872,
+        "source": "vector"
+      }
+    ]
+  },
+  {
+    "id": "q10",
+    "query": "Foundation models for computational pathology",
+    "expected_terms": [
+      "foundation_model",
+      "pathology",
+      "UNI",
+      "CONCH",
+      "HIPT"
+    ],
+    "min_relevant_rank": 3,
+    "min_expected_hits": 1,
+    "hits": [
+      "UNI",
+      "foundation_model",
+      "pathology"
+    ],
+    "hit_count": 3,
+    "result_ids": [
+      "4d1323a0797aba4ac9e1c8a9afcde3ca",
+      "d0a674fafe_6",
+      "repo_69dd6f153f6810fe_0",
+      "doc_1605",
+      "repo_69dd6f153f6810fe_27",
+      "d0a674fafe_31",
+      "repo_4a6c53c15e88dec5_0",
+      "repo_ba92f82460e2c0e1_0",
+      "82229b8f53446fb7f205a6bcee3d6097",
+      "3eb2992957_0"
+    ],
+    "results": [
+      {
+        "id": "4d1323a0797aba4ac9e1c8a9afcde3ca",
+        "title": "Unknown",
+        "score": 0.01639344262295082,
+        "source": "vector"
+      },
+      {
+        "id": "d0a674fafe_6",
+        "title": "Spectrum of Digital Pathology Foundation Models",
+        "score": 0.016129032258064516,
+        "source": "vector"
+      },
+      {
+        "id": "repo_69dd6f153f6810fe_0",
+        "title": "UNI",
+        "score": 0.015873015873015872,
+        "source": "vector"
+      },
+      {
+        "id": "doc_1605",
+        "title": "Computational pathology definitions, best practices, and recommendations for regulatory guidance: a white paper from the Digital Pathology Association",
+        "score": 0.015625,
+        "source": "vector"
+      },
+      {
+        "id": "repo_69dd6f153f6810fe_27",
+        "title": "UNI",
+        "score": 0.015384615384615385,
+        "source": "vector"
+      },
+      {
+        "id": "d0a674fafe_31",
+        "title": "September 17, 2025.",
+        "score": 0.015151515151515152,
+        "source": "vector"
+      },
+      {
+        "id": "repo_4a6c53c15e88dec5_0",
+        "title": "UNI-dual",
+        "score": 0.014925373134328358,
+        "source": "vector"
+      },
+      {
+        "id": "repo_ba92f82460e2c0e1_0",
+        "title": "UNI-dual-v2",
+        "score": 0.014705882352941176,
+        "source": "vector"
+      },
+      {
+        "id": "82229b8f53446fb7f205a6bcee3d6097",
+        "title": "Unknown",
+        "score": 0.014492753623188406,
+        "source": "vector"
+      },
+      {
+        "id": "3eb2992957_0",
+        "title": "A visual-language foundation model for computational",
+        "score": 0.014285714285714285,
+        "source": "vector"
+      }
+    ]
+  }
+]
