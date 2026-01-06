@@ -29,34 +29,8 @@ from lib.config import (
     NEO4J_URI, NEO4J_PASSWORD, get_chroma_path
 )
 
-# Cross-domain concepts for polymathic linking
-CROSS_DOMAIN_CONCEPTS = {
-    # Signal processing
-    "compressed_sensing", "sparse_coding", "information_bottleneck", "wavelet",
-    "fourier", "signal_processing", "denoising", "reconstruction",
-    # Physics/Thermodynamics
-    "entropy", "free_energy", "maximum_entropy", "thermodynamics", "diffusion",
-    "reaction_diffusion", "ising_model", "statistical_mechanics", "boltzmann",
-    # Causality
-    "causal_inference", "counterfactual", "do_calculus", "instrumental_variable",
-    "confounding", "mediation", "dag", "structural_equation",
-    # Systems theory
-    "feedback", "control_theory", "homeostasis", "autopoiesis", "emergence",
-    "self_organization", "requisite_variety", "cybernetics",
-    # Cognitive science
-    "predictive_coding", "bayesian_brain", "active_inference", "embodied_cognition",
-    "affordance", "enactivism", "structure_mapping", "analogy",
-    # Biology
-    "morphogenesis", "gene_regulatory_network", "epigenetics", "metabolism",
-    "evolution", "fitness_landscape", "neutral_theory",
-    # ML/AI core
-    "neural_network", "deep_learning", "transformer", "attention", "embedding",
-    "representation_learning", "transfer_learning", "foundation_model",
-    "contrastive_learning", "self_supervised", "few_shot", "meta_learning",
-    # Optimization
-    "gradient_descent", "convex_optimization", "variational", "em_algorithm",
-    "monte_carlo", "mcmc", "simulated_annealing",
-}
+# Local LLM-based entity extraction (replaces regex-based extraction)
+from lib.local_extractor import LocalEntityExtractor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -111,6 +85,9 @@ class UnifiedIngestor:
         self._postgres = None
         self._embedder = None
         self._pg_caps = None
+
+        # LLM-based entity extractor (replaces regex)
+        self.extractor = LocalEntityExtractor()
 
     def _get_chroma(self):
         """Lazy load ChromaDB."""
@@ -538,23 +515,14 @@ class UnifiedIngestor:
         return [f"{prefix} {chunk}" for chunk in chunks]
 
     def extract_concepts(self, text: str) -> List[str]:
-        """Extract cross-domain concepts from text."""
-        text_lower = text.lower()
-        found = []
+        """Extract concepts from text using local LLM.
 
-        for concept in CROSS_DOMAIN_CONCEPTS:
-            # Match concept as word (with underscores converted to spaces)
-            patterns = [
-                concept.replace('_', ' '),
-                concept.replace('_', '-'),
-                concept,
-            ]
-            for pattern in patterns:
-                if pattern in text_lower:
-                    found.append(concept)
-                    break
-
-        return list(set(found))
+        Uses Ollama with fast model (qwen3:4b) and heavy fallback (deepseek-r1:8b)
+        for robust concept extraction. Concepts are normalized to snake_case.
+        """
+        concepts = self.extractor.extract_concepts(text)
+        # Normalize: lowercase, strip whitespace
+        return [c.lower().strip() for c in concepts if c]
 
     def ingest_pdf(
         self,

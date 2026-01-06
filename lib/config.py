@@ -47,15 +47,24 @@ NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "")
 # Default to BGE-M3 for SOTA performance (1024-dim)
 # Set EMBEDDING_MODEL=all-mpnet-base-v2 for legacy 768-dim embeddings
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-m3")
-RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+EMBEDDING_DIM = 1024  # BGE-M3 dimension
 
-# Collection names (v2 for BGE-M3 embeddings)
-PAPERS_COLLECTION = os.environ.get("PAPERS_COLLECTION", "polymath_papers_v2")
-CODE_COLLECTION = os.environ.get("CODE_COLLECTION", "polymath_code_v2")
+# Collection names - using isolated collection for BGE-M3 (prevents dimension mismatch)
+CHROMA_COLLECTION_NAME = os.environ.get("CHROMA_COLLECTION_NAME", "polymath_bge_m3")
+PAPERS_COLLECTION = os.environ.get("PAPERS_COLLECTION", "polymath_bge_m3")
+CODE_COLLECTION = os.environ.get("CODE_COLLECTION", "polymath_code_bge_m3")
 
 # Legacy collection names (768-dim, for fallback)
 PAPERS_COLLECTION_LEGACY = "polymath_papers"
 CODE_COLLECTION_LEGACY = "polymath_code"
+
+# =============================================================================
+# Local LLM Configuration (Ollama)
+# =============================================================================
+
+LOCAL_LLM_FAST = os.environ.get("LOCAL_LLM_FAST", "qwen3:4b")
+LOCAL_LLM_HEAVY = os.environ.get("LOCAL_LLM_HEAVY", "deepseek-r1:8b")
 
 # =============================================================================
 # LLM Configuration

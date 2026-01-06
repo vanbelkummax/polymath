@@ -38,8 +38,8 @@ from typing import List, Dict, Optional, Literal
 # Config - import from centralized config
 from lib.config import (
     CHROMADB_PATH as CHROMA_PATH, POSTGRES_DSN, NEO4J_URI,
-    EMBEDDING_MODEL, RERANKER_MODEL,
-    PAPERS_COLLECTION, CODE_COLLECTION,
+    EMBEDDING_MODEL, RERANKER_MODEL, EMBEDDING_DIM,
+    CHROMA_COLLECTION_NAME, PAPERS_COLLECTION, CODE_COLLECTION,
     PAPERS_COLLECTION_LEGACY, CODE_COLLECTION_LEGACY
 )
 
@@ -212,12 +212,35 @@ class HybridSearcherV2:
         return self._embedder
 
     def _get_reranker(self):
-        """Lazy-load cross-encoder reranker."""
+        """Lazy-load cross-encoder reranker.
+
+        Uses FlagEmbedding's BGE reranker for best performance with BGE-M3.
+        Falls back to sentence-transformers CrossEncoder if unavailable.
+        """
         if self._reranker is None and self._use_reranker:
             try:
-                from sentence_transformers import CrossEncoder
-                self._reranker = CrossEncoder(RERANKER_MODEL, device='cuda')
-                logger.info(f"Loaded reranker: {RERANKER_MODEL}")
+                # Try FlagEmbedding reranker first (best with BGE-M3)
+                if 'bge-reranker' in RERANKER_MODEL.lower():
+                    try:
+                        from FlagEmbedding import FlagReranker
+                        self._reranker = FlagReranker(
+                            RERANKER_MODEL,
+                            use_fp16=True,
+                            device='cuda'
+                        )
+                        self._use_flag_reranker = True
+                        logger.info(f"Loaded FlagEmbedding reranker: {RERANKER_MODEL}")
+                    except ImportError:
+                        # Fall back to sentence-transformers
+                        from sentence_transformers import CrossEncoder
+                        self._reranker = CrossEncoder(RERANKER_MODEL, device='cuda')
+                        self._use_flag_reranker = False
+                        logger.warning("FlagEmbedding not available, using sentence-transformers reranker")
+                else:
+                    from sentence_transformers import CrossEncoder
+                    self._reranker = CrossEncoder(RERANKER_MODEL, device='cuda')
+                    self._use_flag_reranker = False
+                    logger.info(f"Loaded CrossEncoder reranker: {RERANKER_MODEL}")
             except Exception as e:
                 logger.warning(f"Failed to load reranker: {e}")
                 self._use_reranker = False
@@ -231,6 +254,8 @@ class HybridSearcherV2:
     ) -> List['SearchResult']:
         """
         Rerank results using cross-encoder for improved relevance.
+
+        Supports both FlagReranker (BGE) and sentence-transformers CrossEncoder.
 
         Args:
             query: Original search query
@@ -247,12 +272,20 @@ class HybridSearcherV2:
         if reranker is None:
             return results
 
-        # Prepare pairs for cross-encoder
-        pairs = [(query, r.content[:512]) for r in results]  # Truncate for speed
+        # Prepare passages for reranking
+        passages = [r.content[:512] for r in results]  # Truncate for speed
 
         try:
-            # Get cross-encoder scores
-            scores = reranker.predict(pairs, show_progress_bar=False)
+            # Get reranker scores - API differs between FlagReranker and CrossEncoder
+            if getattr(self, '_use_flag_reranker', False):
+                # FlagReranker uses compute_score
+                scores = reranker.compute_score([[query, p] for p in passages])
+                if not isinstance(scores, list):
+                    scores = [scores]  # Handle single result
+            else:
+                # CrossEncoder uses predict with pairs
+                pairs = [(query, p) for p in passages]
+                scores = reranker.predict(pairs, show_progress_bar=False)
 
             # Update results with new scores
             for i, result in enumerate(results):
@@ -299,10 +332,16 @@ class HybridSearcherV2:
             import chromadb
             client = chromadb.PersistentClient(path=CHROMA_PATH)
             try:
-                self._papers_coll = client.get_collection("polymath_papers")
+                # Try new BGE-M3 collection first, fall back to legacy
+                self._papers_coll = client.get_collection(PAPERS_COLLECTION)
+                logger.debug(f"Using papers collection: {PAPERS_COLLECTION}")
             except Exception:
-                logger.warning("polymath_papers collection not found")
-                return None
+                try:
+                    self._papers_coll = client.get_collection(PAPERS_COLLECTION_LEGACY)
+                    logger.info(f"Falling back to legacy collection: {PAPERS_COLLECTION_LEGACY}")
+                except Exception:
+                    logger.warning(f"No papers collection found ({PAPERS_COLLECTION} or {PAPERS_COLLECTION_LEGACY})")
+                    return None
         return self._papers_coll
 
     def _get_code_collection(self):
@@ -310,10 +349,16 @@ class HybridSearcherV2:
             import chromadb
             client = chromadb.PersistentClient(path=CHROMA_PATH)
             try:
-                self._code_coll = client.get_collection("polymath_code")
+                # Try new BGE-M3 collection first, fall back to legacy
+                self._code_coll = client.get_collection(CODE_COLLECTION)
+                logger.debug(f"Using code collection: {CODE_COLLECTION}")
             except Exception:
-                logger.warning("polymath_code collection not found")
-                return None
+                try:
+                    self._code_coll = client.get_collection(CODE_COLLECTION_LEGACY)
+                    logger.info(f"Falling back to legacy collection: {CODE_COLLECTION_LEGACY}")
+                except Exception:
+                    logger.warning(f"No code collection found ({CODE_COLLECTION} or {CODE_COLLECTION_LEGACY})")
+                    return None
         return self._code_coll
 
     def _get_postgres(self):

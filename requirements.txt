@@ -5,9 +5,12 @@ neo4j>=5.0.0
 
 # Embeddings and ML
 sentence-transformers>=2.2.0
-FlagEmbedding>=1.2.0  # BGE-M3 SOTA embeddings (1024-dim)
+FlagEmbedding>=1.2.5  # BGE-M3 SOTA embeddings (1024-dim) + BGE-reranker-v2-m3
 torch>=2.0.0
 transformers>=4.30.0
+
+# Local LLM inference
+ollama>=0.1.6  # Local entity extraction via qwen3:4b / deepseek-r1:8b
 
 # NLI for evidence extraction
 optimum>=1.0.0
