@@ -261,9 +261,8 @@ pytest tests/ -v
 ## Author
 
 **Max Van Belkum**
-- Vanderbilt University, Huo Lab
+- Vanderbilt University
 - MD-PhD Student
-- Research: Spatial transcriptomics, Computational pathology, pks+ E. coli in CRC
 
 ## License
 
@@ -273,15 +272,10 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 If you use Polymath in your research, please cite:
 
-```bibtex
-@software{polymath2026,
-  author = {Van Belkum, Max},
-  title = {Polymath: A Polymathic Research Intelligence System},
-  year = {2026},
-  url = {https://github.com/vanbelkummax/polymath}
-}
+
 ```
 
 ---
 
 *"The test of a first-rate intelligence is the ability to hold two opposed ideas in mind at the same time and still retain the ability to function."* — F. Scott Fitzgerald
+
