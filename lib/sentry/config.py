@@ -26,6 +26,7 @@ RATE_LIMITS = {
     "youtube": 1.0,
     "brave": 1.0,
     "unpaywall": 1.0,
+    "openalex": 10.0,       # Polite pool with email (250M+ works)
 }
 
 # ============================================================
@@ -43,13 +44,17 @@ GUARDRAILS = {
 }
 
 # ============================================================
-# PATHS
+# PATHS - import from centralized config
 # ============================================================
 
-POLYMAX_HOME = "/home/user/work/polymax"
-STAGING_DIR = f"{POLYMAX_HOME}/ingest_staging"
-GITHUB_REPOS_DIR = f"{POLYMAX_HOME}/data/github_repos"
-CHROMADB_PATH = f"{POLYMAX_HOME}/chromadb/polymath_v2"
+from lib.config import (
+    PROJECT_ROOT as POLYMAX_HOME,
+    STAGING_DIR,
+    CHROMADB_PATH,
+)
+
+# Derived paths
+GITHUB_REPOS_DIR = str(POLYMAX_HOME / "data" / "github_repos")
 
 # ============================================================
 # YOUTUBE CHANNEL WHITELIST (Academic Only)

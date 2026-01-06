@@ -5,6 +5,7 @@ neo4j>=5.0.0
 
 # Embeddings and ML
 sentence-transformers>=2.2.0
+FlagEmbedding>=1.2.0  # BGE-M3 SOTA embeddings (1024-dim)
 torch>=2.0.0
 transformers>=4.30.0
 

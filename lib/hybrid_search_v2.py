@@ -35,12 +35,13 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Literal
 
-# Config
-CHROMA_PATH = os.environ.get("CHROMA_PATH", "/home/user/work/polymax/chromadb")
-POSTGRES_DSN = "dbname=polymath user=polymath host=/var/run/postgresql"
-NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
-EMBEDDING_MODEL = "all-mpnet-base-v2"
-RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Fast and effective
+# Config - import from centralized config
+from lib.config import (
+    CHROMADB_PATH as CHROMA_PATH, POSTGRES_DSN, NEO4J_URI,
+    EMBEDDING_MODEL, RERANKER_MODEL,
+    PAPERS_COLLECTION, CODE_COLLECTION,
+    PAPERS_COLLECTION_LEGACY, CODE_COLLECTION_LEGACY
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -176,9 +177,38 @@ class HybridSearcherV2:
         self._cache_size = 256
 
     def _get_embedder(self):
+        """Lazy-load embedding model with BGE-M3 support.
+
+        BGE-M3 is a 2024 SOTA model with 1024-dim embeddings that supports
+        dense, sparse, and multi-vector retrieval. For best performance,
+        we use FlagEmbedding when available, falling back to sentence-transformers.
+        """
         if self._embedder is None:
-            from sentence_transformers import SentenceTransformer
-            self._embedder = SentenceTransformer(EMBEDDING_MODEL, device='cuda')
+            model_name = EMBEDDING_MODEL
+
+            # BGE-M3 requires specific initialization for optimal performance
+            if 'bge-m3' in model_name.lower():
+                try:
+                    from FlagEmbedding import BGEM3FlagModel
+                    self._embedder = BGEM3FlagModel(
+                        model_name,
+                        use_fp16=True,  # GPU optimization
+                        device='cuda'
+                    )
+                    self._use_bge_m3 = True
+                    logger.info(f"Loaded BGE-M3 model (FlagEmbedding): {model_name}")
+                except ImportError:
+                    # Fallback to sentence-transformers
+                    from sentence_transformers import SentenceTransformer
+                    self._embedder = SentenceTransformer(model_name, device='cuda')
+                    self._use_bge_m3 = False
+                    logger.warning("FlagEmbedding not installed, using sentence-transformers fallback")
+            else:
+                from sentence_transformers import SentenceTransformer
+                self._embedder = SentenceTransformer(model_name, device='cuda')
+                self._use_bge_m3 = False
+                logger.info(f"Loaded embedding model: {model_name}")
+
         return self._embedder
 
     def _get_reranker(self):
@@ -242,9 +272,23 @@ class HybridSearcherV2:
             return results
 
     def _encode(self, query: str):
+        """Encode text to embedding vector.
+
+        Handles both BGE-M3 (FlagEmbedding) and standard sentence-transformers.
+        """
         if query in self._embed_cache:
             return self._embed_cache[query]
-        emb = self._get_embedder().encode([query]).tolist()
+
+        embedder = self._get_embedder()
+
+        if getattr(self, '_use_bge_m3', False):
+            # BGE-M3 returns dict with 'dense_vecs'
+            result = embedder.encode([query], return_dense=True)
+            emb = result['dense_vecs'][0].tolist()
+        else:
+            # Standard sentence-transformers
+            emb = embedder.encode([query]).tolist()
+
         self._embed_cache[query] = emb
         if len(self._embed_cache) > self._cache_size:
             self._embed_cache.popitem(last=False)

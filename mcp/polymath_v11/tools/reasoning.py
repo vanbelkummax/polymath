@@ -2,17 +2,26 @@
 Polymath v11 Reasoning Tools
 
 Tools 9-14: Hypothesis generation, analogy finding, serendipity
+
+Includes "slow thinking" mode for hypothesis generation that:
+- Decomposes problems step-by-step
+- Validates each reasoning step against corpus
+- Produces explicit reasoning chains
 """
 
 import sys
+import os
 import random
 from pathlib import Path
-from typing import Optional, Set
+from typing import Optional, Set, List, Dict
 from collections import Counter
 import math
+import logging
 
 # Add lib to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "lib"))
+
+logger = logging.getLogger(__name__)
 
 from hybrid_search_v2 import HybridSearcherV2
 from db import get_db_connection
@@ -119,12 +128,226 @@ class ReasoningTools:
             self.searcher = HybridSearcherV2()
         return self.searcher
 
-    async def generate_hypothesis(self, research_area: str, num_hypotheses: int = 5) -> dict:
+    def _has_llm_api(self) -> bool:
+        """Check if LLM API is available and enabled."""
+        from lib.config import ENABLE_LLM_API, ANTHROPIC_API_KEY
+        return ENABLE_LLM_API and bool(ANTHROPIC_API_KEY)
+
+    async def _slow_think_step(
+        self,
+        step_name: str,
+        question: str,
+        searcher: 'HybridSearcherV2'
+    ) -> Dict:
+        """Execute one step of slow thinking with corpus validation.
+
+        Args:
+            step_name: Name of this reasoning step
+            question: Question to answer in this step
+            searcher: HybridSearcher for corpus queries
+
+        Returns:
+            Dict with step results and supporting evidence
+        """
+        # Search corpus for relevant evidence
+        results = searcher.search_papers(question, n=10)
+
+        evidence = []
+        for r in results[:3]:
+            evidence.append({
+                "title": r.title,
+                "snippet": r.content[:150],
+                "score": round(r.score, 3)
+            })
+
+        return {
+            "step": step_name,
+            "question": question,
+            "evidence_found": len(results),
+            "top_evidence": evidence,
+            "confidence": min(0.9, len(results) / 10.0) if results else 0.1
+        }
+
+    async def _slow_think_hypothesis(
+        self,
+        research_area: str,
+        source_concept: str,
+        target_property: str,
+        searcher: 'HybridSearcherV2'
+    ) -> Dict:
+        """Generate hypothesis using step-by-step slow thinking.
+
+        Chain of thought:
+        1. What problem does {source_concept} solve in its native domain?
+        2. What analogous problem exists in {research_area}?
+        3. How would {source_concept} methods transfer?
+        4. What adaptations would be needed?
+        5. What evidence supports this transfer?
+        6. What could go wrong?
+        """
+        reasoning_chain = []
+
+        # Step 1: Source domain analysis
+        step1 = await self._slow_think_step(
+            "source_analysis",
+            f"{source_concept} methods applications",
+            searcher
+        )
+        step1["finding"] = f"Found {step1['evidence_found']} papers on {source_concept}"
+        reasoning_chain.append(step1)
+
+        # Step 2: Target domain gap analysis
+        step2 = await self._slow_think_step(
+            "gap_analysis",
+            f"{research_area} challenges {target_property} problems",
+            searcher
+        )
+        step2["finding"] = f"Found {step2['evidence_found']} papers on challenges in {research_area}"
+        reasoning_chain.append(step2)
+
+        # Step 3: Transfer feasibility
+        step3 = await self._slow_think_step(
+            "transfer_analysis",
+            f"{source_concept} applied to {research_area}",
+            searcher
+        )
+        existing_bridges = step3['evidence_found']
+        step3["finding"] = f"Found {existing_bridges} papers bridging these concepts"
+        reasoning_chain.append(step3)
+
+        # Step 4: Risk analysis
+        step4 = await self._slow_think_step(
+            "risk_analysis",
+            f"{source_concept} limitations failures",
+            searcher
+        )
+        step4["finding"] = f"Identified {step4['evidence_found']} papers discussing limitations"
+        reasoning_chain.append(step4)
+
+        # Compute composite scores
+        transfer_feasibility = "high" if existing_bridges < 5 else "medium" if existing_bridges < 15 else "well-established"
+        overall_confidence = sum(s["confidence"] for s in reasoning_chain) / len(reasoning_chain)
+
+        # Generate hypothesis with full reasoning trace
+        return {
+            "source_domain": source_concept.replace("_", " "),
+            "target_domain": research_area,
+            "hypothesis": f"Applying {source_concept.replace('_', ' ')} methods to {research_area} could improve {target_property.replace('_', ' ')}",
+            "reasoning_chain": reasoning_chain,
+            "reasoning_mode": "slow_thinking",
+            "novelty_score": _compute_novelty_score(source_concept, research_area, searcher),
+            "transfer_feasibility": transfer_feasibility,
+            "overall_confidence": round(overall_confidence, 3),
+            "testability": "high" if existing_bridges < 5 else "medium",
+            "potential_risks": [
+                f"May require adaptation of {source_concept} for {research_area} data structures",
+                f"Existing {existing_bridges} papers may have already explored this direction"
+            ] if existing_bridges > 0 else [
+                "Novel combination - limited prior work to guide implementation",
+                "May face unforeseen domain-specific challenges"
+            ]
+        }
+
+    async def _llm_slow_think(
+        self,
+        research_area: str,
+        source: str,
+        target: str,
+        context: List[Dict]
+    ) -> Optional[Dict]:
+        """Use LLM for deep reasoning about hypothesis.
+
+        Only called when ENABLE_LLM_API=true.
+        Primary mode uses Claude subagents via Task tool in Claude Code sessions.
+        """
+        if not self._has_llm_api():
+            # Return None to signal caller should use rule-based fallback
+            return None
+
+        try:
+            from anthropic import Anthropic
+            from lib.config import LLM_MODEL
+
+            client = Anthropic()
+
+            # Build context from corpus
+            context_text = "\n".join([
+                f"- {p.get('title', 'Unknown')}: {p.get('snippet', '')[:200]}"
+                for p in context[:10]
+            ])
+
+            prompt = f"""You are a research scientist generating novel hypotheses.
+
+Research Area: {research_area}
+Source Concept: {source}
+Target Property: {target}
+
+Relevant Papers:
+{context_text}
+
+Think step-by-step through this potential cross-domain hypothesis:
+
+1. PROBLEM: What specific problem in {research_area} might benefit from {source} methods?
+2. ANALOGY: What structural similarity exists between {source} and the target problem?
+3. TRANSFER: What specific methods from {source} could transfer?
+4. ADAPTATION: What modifications would be needed for {research_area}?
+5. VALIDATION: How could this hypothesis be tested?
+6. RISKS: What could prevent this from working?
+
+Output a JSON object with:
+- hypothesis: Clear, testable statement
+- reasoning_chain: Array of step-by-step reasoning
+- novelty_assessment: Why novel (or not)
+- testability: "high", "medium", or "low"
+- confidence: 0.0 to 1.0
+"""
+
+            response = client.messages.create(
+                model=LLM_MODEL,
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            # Parse LLM response
+            import json
+            result_text = response.content[0].text
+
+            # Extract JSON from response (may be wrapped in markdown)
+            if "```json" in result_text:
+                result_text = result_text.split("```json")[1].split("```")[0]
+            elif "```" in result_text:
+                result_text = result_text.split("```")[1].split("```")[0]
+
+            result = json.loads(result_text)
+            result["source_domain"] = source
+            result["target_domain"] = research_area
+            result["reasoning_mode"] = "llm_slow_think"
+
+            return result
+
+        except Exception as e:
+            logger.warning(f"LLM slow thinking failed: {e}, falling back to rule-based")
+            return None
+
+    async def generate_hypothesis(
+        self,
+        research_area: str,
+        num_hypotheses: int = 5,
+        use_slow_thinking: bool = True
+    ) -> dict:
         """
         Tool 9: Generate cross-domain hypotheses.
 
         Uses structure mapping to find analogies between domains
         and generate testable hypotheses.
+
+        Args:
+            research_area: The target research area
+            num_hypotheses: Number of hypotheses to generate
+            use_slow_thinking: If True, use step-by-step reasoning with corpus validation
+
+        Returns:
+            Dict with hypotheses and reasoning methodology
         """
         hs = self._get_searcher()
 
@@ -156,6 +379,7 @@ class ReasoningTools:
         ]
 
         hypotheses = []
+        reasoning_mode = "fast" if not use_slow_thinking else "slow_thinking"
 
         # Find bridges between research area and cross-domain concepts
         for source_concept, target_property in cross_domain_seeds[:num_hypotheses]:
@@ -163,31 +387,47 @@ class ReasoningTools:
             source_results = hs.search_papers(source_concept, n=10)
 
             if source_results:
-                # Extract key mechanism from source (SearchResult objects)
-                source_doc = source_results[0].content[:200]
+                if use_slow_thinking:
+                    # Use slow thinking with step-by-step reasoning
+                    # First try LLM if available
+                    context = [{"title": r.title, "snippet": r.content[:200]} for r in source_results[:5]]
+                    llm_result = await self._llm_slow_think(research_area, source_concept, target_property, context)
 
-                # Generate hypothesis
-                hypothesis = {
-                    "source_domain": source_concept.replace("_", " "),
-                    "target_domain": research_area,
-                    "hypothesis": f"Methods from {source_concept.replace('_', ' ')} can be applied to {research_area} for {target_property.replace('_', ' ')}",
-                    "rationale": f"Both involve {target_property.replace('_', ' ')} problems with similar mathematical structure",
-                    "testability": "high" if source_concept in ["compressed_sensing", "attention_mechanism"] else "medium",
-                    "novelty_score": _compute_novelty_score(source_concept, research_area, hs),
-                    "supporting_evidence": source_doc,
-                    "next_steps": [
-                        f"Search for existing work combining {source_concept} and {research_area}",
-                        f"Identify specific {target_property} problem in {research_area}",
-                        f"Design proof-of-concept experiment"
-                    ]
-                }
-                hypotheses.append(hypothesis)
+                    if llm_result:
+                        hypotheses.append(llm_result)
+                    else:
+                        # Fall back to rule-based slow thinking
+                        hypothesis = await self._slow_think_hypothesis(
+                            research_area, source_concept, target_property, hs
+                        )
+                        hypotheses.append(hypothesis)
+                else:
+                    # Fast mode: simple hypothesis without deep reasoning
+                    source_doc = source_results[0].content[:200]
+
+                    hypothesis = {
+                        "source_domain": source_concept.replace("_", " "),
+                        "target_domain": research_area,
+                        "hypothesis": f"Methods from {source_concept.replace('_', ' ')} can be applied to {research_area} for {target_property.replace('_', ' ')}",
+                        "rationale": f"Both involve {target_property.replace('_', ' ')} problems with similar mathematical structure",
+                        "testability": "high" if source_concept in ["compressed_sensing", "attention_mechanism"] else "medium",
+                        "novelty_score": _compute_novelty_score(source_concept, research_area, hs),
+                        "reasoning_mode": "fast",
+                        "supporting_evidence": source_doc,
+                        "next_steps": [
+                            f"Search for existing work combining {source_concept} and {research_area}",
+                            f"Identify specific {target_property} problem in {research_area}",
+                            f"Design proof-of-concept experiment"
+                        ]
+                    }
+                    hypotheses.append(hypothesis)
 
         return {
             "research_area": research_area,
             "concepts_found": top_concepts[:10],
             "hypotheses": hypotheses,
-            "methodology": "Structure mapping + cross-domain analogy",
+            "reasoning_mode": reasoning_mode,
+            "methodology": "Structure mapping + cross-domain analogy" + (" with slow thinking" if use_slow_thinking else ""),
             "disclaimer": "Hypotheses require validation - search for existing work first"
         }
 
