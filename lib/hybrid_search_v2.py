@@ -332,16 +332,16 @@ class HybridSearcherV2:
             import chromadb
             client = chromadb.PersistentClient(path=CHROMA_PATH)
             try:
-                # Try new BGE-M3 collection first, fall back to legacy
+                # Use ONLY the BGE-M3 collection (1024-dim) - NO FALLBACK
+                # Fallback is dangerous: querying 768-dim legacy with 1024-dim vectors crashes
                 self._papers_coll = client.get_collection(PAPERS_COLLECTION)
                 logger.debug(f"Using papers collection: {PAPERS_COLLECTION}")
             except Exception:
-                try:
-                    self._papers_coll = client.get_collection(PAPERS_COLLECTION_LEGACY)
-                    logger.info(f"Falling back to legacy collection: {PAPERS_COLLECTION_LEGACY}")
-                except Exception:
-                    logger.warning(f"No papers collection found ({PAPERS_COLLECTION} or {PAPERS_COLLECTION_LEGACY})")
-                    return None
+                logger.warning(
+                    f"⚠️  Papers collection '{PAPERS_COLLECTION}' not found.\n"
+                    f"   Run: python scripts/migrate_knowledge_base.py --apply"
+                )
+                return None
         return self._papers_coll
 
     def _get_code_collection(self):
@@ -349,16 +349,16 @@ class HybridSearcherV2:
             import chromadb
             client = chromadb.PersistentClient(path=CHROMA_PATH)
             try:
-                # Try new BGE-M3 collection first, fall back to legacy
+                # Use ONLY the BGE-M3 collection (1024-dim) - NO FALLBACK
+                # Fallback is dangerous: querying 768-dim legacy with 1024-dim vectors crashes
                 self._code_coll = client.get_collection(CODE_COLLECTION)
                 logger.debug(f"Using code collection: {CODE_COLLECTION}")
             except Exception:
-                try:
-                    self._code_coll = client.get_collection(CODE_COLLECTION_LEGACY)
-                    logger.info(f"Falling back to legacy collection: {CODE_COLLECTION_LEGACY}")
-                except Exception:
-                    logger.warning(f"No code collection found ({CODE_COLLECTION} or {CODE_COLLECTION_LEGACY})")
-                    return None
+                logger.warning(
+                    f"⚠️  Code collection '{CODE_COLLECTION}' not found.\n"
+                    f"   Run: python scripts/migrate_knowledge_base.py --apply"
+                )
+                return None
         return self._code_coll
 
     def _get_postgres(self):

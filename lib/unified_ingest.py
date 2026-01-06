@@ -26,7 +26,7 @@ import logging
 # Configuration - import from centralized config
 from lib.config import (
     CHROMADB_PATH, STAGING_DIR, POSTGRES_DSN as POSTGRES_URL,
-    NEO4J_URI, NEO4J_PASSWORD, get_chroma_path
+    NEO4J_URI, NEO4J_PASSWORD, get_chroma_path, PAPERS_COLLECTION
 )
 
 # Local LLM-based entity extraction (replaces regex-based extraction)
@@ -90,11 +90,12 @@ class UnifiedIngestor:
         self.extractor = LocalEntityExtractor()
 
     def _get_chroma(self):
-        """Lazy load ChromaDB."""
+        """Lazy load ChromaDB with correct 1024-dim BGE-M3 collection."""
         if self._chroma is None:
             import chromadb
             client = chromadb.PersistentClient(path=CHROMADB_PATH)
-            self._chroma = client.get_or_create_collection("polymath_papers")
+            # Use PAPERS_COLLECTION from config (polymath_bge_m3) - NOT legacy collection
+            self._chroma = client.get_or_create_collection(PAPERS_COLLECTION)
         return self._chroma
 
     def _get_neo4j(self):

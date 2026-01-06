@@ -420,6 +420,25 @@ class KnowledgeBaseMigrator:
 
     def run(self, resume: bool = False, verify_only: bool = False):
         """Run the full migration."""
+        # CRITICAL: Verify Postgres has data before starting migration
+        # Postgres is the Source of Truth - we cannot migrate without it
+        if not verify_only:
+            cursor = self.pg_conn.cursor()
+            cursor.execute("SELECT count(*) FROM passages")
+            passage_count = cursor.fetchone()[0]
+            cursor.close()
+
+            if passage_count == 0:
+                raise RuntimeError(
+                    "🛑 MIGRATION BLOCKED: Postgres 'passages' table is empty.\n\n"
+                    "The migration script requires Postgres as the Source of Truth.\n"
+                    "Cannot generate Vector (ChromaDB) or Graph (Neo4j) without Lexical data.\n\n"
+                    "Please ingest documents first:\n"
+                    "  python lib/unified_ingest.py /path/to/pdfs/ --enhanced-parser\n"
+                )
+
+            logger.info(f"✓ Postgres verified: {passage_count:,} passages available for migration")
+
         if verify_only:
             results = self.verify_migration()
             print(json.dumps(results, indent=2))
