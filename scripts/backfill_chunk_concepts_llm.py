@@ -10,6 +10,7 @@ import sys
 import argparse
 import logging
 from pathlib import Path
+from typing import Optional
 
 # Add lib to path
 sys.path.insert(0, str(Path(__file__).parent.parent))

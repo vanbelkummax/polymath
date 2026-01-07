@@ -43,8 +43,11 @@ pyproject.toml                             - Added dependencies
 ollama serve  # Or verify: curl http://localhost:11434/api/version
 
 # 2. Pull required models
-ollama pull qwen2.5:3b
+ollama pull qwen2.5:3b  # Or use qwen2.5:7b-instruct if available
 ollama pull deepseek-r1:8b  # Optional but recommended
+
+# Note: If qwen2.5:3b is not available, set LOCAL_LLM_FAST to use an alternative:
+export LOCAL_LLM_FAST="qwen2.5:7b-instruct"
 
 # 3. Set environment variables
 export NEO4J_PASSWORD=polymathic2026
