@@ -83,6 +83,7 @@ ENABLE_LLM_API = os.environ.get("ENABLE_LLM_API", "false").lower() == "true"
 BRAVE_API_KEY: Optional[str] = os.environ.get("BRAVE_API_KEY")
 GITHUB_TOKEN: Optional[str] = os.environ.get("GITHUB_TOKEN")
 OPENALEX_EMAIL = os.environ.get("OPENALEX_EMAIL", "polymath@example.com")
+OPENALEX_API_KEY = os.environ.get("OPENALEX_API_KEY", "")
 
 # =============================================================================
 # Rate Limits (requests per second)

@@ -10,11 +10,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 from collections import Counter
 
-# Add lib to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "lib"))
+# Add repo root to path so `lib.*` imports resolve correctly.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT))
 
-from hybrid_search_v2 import HybridSearcherV2
-from db import Database
+from lib.hybrid_search_v2 import HybridSearcherV2
+from lib.db import Database
 
 
 class DiscoveryTools:

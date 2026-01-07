@@ -18,13 +18,14 @@ from collections import Counter
 import math
 import logging
 
-# Add lib to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "lib"))
+# Add repo root to path so `lib.*` imports resolve correctly.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT))
 
 logger = logging.getLogger(__name__)
 
-from hybrid_search_v2 import HybridSearcherV2
-from db import get_db_connection
+from lib.hybrid_search_v2 import HybridSearcherV2
+from lib.db import get_db_connection
 
 
 # Domain categories for novelty scoring

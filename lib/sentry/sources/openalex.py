@@ -40,14 +40,16 @@ class OpenAlexSource:
     rate_limit = RATE_LIMITS.get("openalex", 10.0)
     base_url = "https://api.openalex.org"
 
-    def __init__(self, email: str = None):
-        """Initialize with optional email for polite pool access.
+    def __init__(self, email: str = None, api_key: str = None):
+        """Initialize with optional email and API key for polite pool access.
 
         Args:
             email: Email for polite pool (10 req/sec vs 1 req/sec)
+            api_key: OpenAlex API key for premium features
         """
-        from lib.config import OPENALEX_EMAIL
+        from lib.config import OPENALEX_EMAIL, OPENALEX_API_KEY
         self.email = email or OPENALEX_EMAIL
+        self.api_key = api_key or OPENALEX_API_KEY
         self.client = httpx.Client(timeout=30.0)
         self.last_request = 0.0
 
@@ -95,6 +97,8 @@ class OpenAlexSource:
             "sort": sort,
             "mailto": self.email,
         }
+        if self.api_key:
+            params["api_key"] = self.api_key
         if filters:
             params["filter"] = ",".join(filters)
 

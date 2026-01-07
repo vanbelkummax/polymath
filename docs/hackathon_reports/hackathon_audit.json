@@ -1,58 +1,58 @@
 {
-  "generated_at": "2026-01-07T04:52:43.568674Z",
+  "generated_at": "2026-01-07T06:17:06.202499Z",
   "counts": {
-    "documents": 29352,
-    "passages": 532259,
-    "code_files": 64698,
-    "code_chunks": 411729,
+    "documents": 29485,
+    "passages": 545258,
+    "code_files": 65441,
+    "code_chunks": 416397,
     "concepts": 200,
     "artifact_concepts": 0
   },
   "group_summaries": {
     "core": {
-      "title_hits": 646,
+      "title_hits": 670,
       "concept_docs": 983,
-      "code_files": 4843
+      "code_files": 4900
     },
     "modalities": {
-      "title_hits": 6,
+      "title_hits": 13,
       "concept_docs": 5,
-      "code_files": 30
+      "code_files": 174
     },
     "imaging": {
-      "title_hits": 162,
+      "title_hits": 164,
       "concept_docs": 154,
       "code_files": 0
     },
     "tasks": {
-      "title_hits": 438,
+      "title_hits": 449,
       "concept_docs": 726,
-      "code_files": 161
+      "code_files": 184
     },
     "methods": {
-      "title_hits": 332,
+      "title_hits": 341,
       "concept_docs": 975,
       "code_files": 4880
     },
     "tooling": {
-      "title_hits": 9,
+      "title_hits": 14,
       "concept_docs": 0,
-      "code_files": 937
+      "code_files": 1028
     }
   },
   "keywords": [
     {
       "group": "core",
       "keyword": "spatial",
-      "title_hits": 214,
+      "title_hits": 230,
       "concept_docs": 186,
-      "code_files": 468,
+      "code_files": 518,
       "status": "ok"
     },
     {
       "group": "core",
       "keyword": "multimodal",
-      "title_hits": 74,
+      "title_hits": 76,
       "concept_docs": 0,
       "code_files": 466,
       "status": "ok"
@@ -100,23 +100,23 @@
     {
       "group": "core",
       "keyword": "integration",
-      "title_hits": 91,
+      "title_hits": 93,
       "concept_docs": 0,
-      "code_files": 3780,
+      "code_files": 3781,
       "status": "ok"
     },
     {
       "group": "core",
       "keyword": "fusion",
-      "title_hits": 271,
+      "title_hits": 276,
       "concept_docs": 803,
-      "code_files": 141,
+      "code_files": 147,
       "status": "ok"
     },
     {
       "group": "modalities",
       "keyword": "visium",
-      "title_hits": 1,
+      "title_hits": 4,
       "concept_docs": 5,
       "code_files": 20,
       "status": "ok"
@@ -124,15 +124,15 @@
     {
       "group": "modalities",
       "keyword": "visium hd",
-      "title_hits": 0,
+      "title_hits": 2,
       "concept_docs": 0,
       "code_files": 0,
-      "status": "missing"
+      "status": "thin"
     },
     {
       "group": "modalities",
       "keyword": "xenium",
-      "title_hits": 3,
+      "title_hits": 6,
       "concept_docs": 0,
       "code_files": 3,
       "status": "ok"
@@ -142,21 +142,21 @@
       "keyword": "merfish",
       "title_hits": 0,
       "concept_docs": 0,
-      "code_files": 2,
+      "code_files": 5,
       "status": "ok"
     },
     {
       "group": "modalities",
       "keyword": "cosmx",
-      "title_hits": 0,
+      "title_hits": 1,
       "concept_docs": 0,
-      "code_files": 1,
-      "status": "thin"
+      "code_files": 113,
+      "status": "ok"
     },
     {
       "group": "modalities",
       "keyword": "slide-seq",
-      "title_hits": 1,
+      "title_hits": 2,
       "concept_docs": 0,
       "code_files": 0,
       "status": "thin"
@@ -166,15 +166,15 @@
       "keyword": "slideseq",
       "title_hits": 0,
       "concept_docs": 0,
-      "code_files": 0,
-      "status": "missing"
+      "code_files": 25,
+      "status": "ok"
     },
     {
       "group": "modalities",
       "keyword": "seqfish",
       "title_hits": 0,
       "concept_docs": 0,
-      "code_files": 2,
+      "code_files": 4,
       "status": "ok"
     },
     {
@@ -206,7 +206,7 @@
       "keyword": "smfish",
       "title_hits": 0,
       "concept_docs": 0,
-      "code_files": 2,
+      "code_files": 4,
       "status": "ok"
     },
     {
@@ -228,7 +228,7 @@
     {
       "group": "imaging",
       "keyword": "histology",
-      "title_hits": 27,
+      "title_hits": 28,
       "concept_docs": 35,
       "code_files": 0,
       "status": "ok"
@@ -236,7 +236,7 @@
     {
       "group": "imaging",
       "keyword": "pathology",
-      "title_hits": 105,
+      "title_hits": 106,
       "concept_docs": 109,
       "code_files": 0,
       "status": "ok"
@@ -260,9 +260,9 @@
     {
       "group": "tasks",
       "keyword": "alignment",
-      "title_hits": 68,
+      "title_hits": 73,
       "concept_docs": 0,
-      "code_files": 3,
+      "code_files": 9,
       "status": "ok"
     },
     {
@@ -270,23 +270,23 @@
       "keyword": "registration",
       "title_hits": 22,
       "concept_docs": 0,
-      "code_files": 27,
+      "code_files": 35,
       "status": "ok"
     },
     {
       "group": "tasks",
       "keyword": "deconvolution",
-      "title_hits": 33,
+      "title_hits": 35,
       "concept_docs": 20,
-      "code_files": 0,
+      "code_files": 1,
       "status": "ok"
     },
     {
       "group": "tasks",
       "keyword": "segmentation",
-      "title_hits": 197,
+      "title_hits": 200,
       "concept_docs": 644,
-      "code_files": 81,
+      "code_files": 83,
       "status": "ok"
     },
     {
@@ -300,9 +300,9 @@
     {
       "group": "tasks",
       "keyword": "mapping",
-      "title_hits": 83,
+      "title_hits": 84,
       "concept_docs": 0,
-      "code_files": 48,
+      "code_files": 54,
       "status": "ok"
     },
     {
@@ -316,7 +316,7 @@
     {
       "group": "tasks",
       "keyword": "cell type",
-      "title_hits": 30,
+      "title_hits": 32,
       "concept_docs": 2,
       "code_files": 0,
       "status": "ok"
@@ -348,15 +348,15 @@
     {
       "group": "methods",
       "keyword": "graph matching",
-      "title_hits": 0,
+      "title_hits": 1,
       "concept_docs": 0,
       "code_files": 0,
-      "status": "missing"
+      "status": "thin"
     },
     {
       "group": "methods",
       "keyword": "contrastive",
-      "title_hits": 28,
+      "title_hits": 29,
       "concept_docs": 70,
       "code_files": 12,
       "status": "ok"
@@ -364,7 +364,7 @@
     {
       "group": "methods",
       "keyword": "transformer",
-      "title_hits": 181,
+      "title_hits": 185,
       "concept_docs": 457,
       "code_files": 4779,
       "status": "ok"
@@ -372,7 +372,7 @@
     {
       "group": "methods",
       "keyword": "graph neural",
-      "title_hits": 35,
+      "title_hits": 37,
       "concept_docs": 0,
       "code_files": 0,
       "status": "ok"
@@ -396,7 +396,7 @@
     {
       "group": "methods",
       "keyword": "bayesian",
-      "title_hits": 60,
+      "title_hits": 62,
       "concept_docs": 536,
       "code_files": 5,
       "status": "ok"
@@ -414,7 +414,7 @@
       "keyword": "seurat",
       "title_hits": 3,
       "concept_docs": 0,
-      "code_files": 64,
+      "code_files": 86,
       "status": "ok"
     },
     {
@@ -444,7 +444,7 @@
     {
       "group": "tooling",
       "keyword": "tangram",
-      "title_hits": 3,
+      "title_hits": 4,
       "concept_docs": 0,
       "code_files": 23,
       "status": "ok"
@@ -452,31 +452,31 @@
     {
       "group": "tooling",
       "keyword": "stalign",
-      "title_hits": 0,
+      "title_hits": 1,
       "concept_docs": 0,
-      "code_files": 0,
-      "status": "missing"
+      "code_files": 5,
+      "status": "ok"
     },
     {
       "group": "tooling",
       "keyword": "spatialde",
-      "title_hits": 1,
+      "title_hits": 2,
       "concept_docs": 0,
-      "code_files": 0,
-      "status": "thin"
+      "code_files": 48,
+      "status": "ok"
     },
     {
       "group": "tooling",
       "keyword": "bayesprism",
-      "title_hits": 0,
+      "title_hits": 1,
       "concept_docs": 0,
-      "code_files": 0,
-      "status": "missing"
+      "code_files": 15,
+      "status": "ok"
     },
     {
       "group": "tooling",
       "keyword": "destvi",
-      "title_hits": 0,
+      "title_hits": 1,
       "concept_docs": 0,
       "code_files": 3,
       "status": "ok"
@@ -494,30 +494,25 @@
       "keyword": "scvi",
       "title_hits": 1,
       "concept_docs": 0,
-      "code_files": 375,
+      "code_files": 377,
       "status": "ok"
     }
   ],
   "missing": [
-    "bayesprism",
     "co-embedding",
-    "graph matching",
     "in situ sequencing",
     "label transfer",
-    "multi modal",
-    "slideseq",
-    "stalign",
-    "visium hd"
+    "multi modal"
   ],
   "thin": [
-    "cosmx",
+    "graph matching",
     "multiome",
     "multiomics",
     "optimal transport",
     "slide-seq",
-    "spatialde",
     "stereo-seq",
-    "stereoseq"
+    "stereoseq",
+    "visium hd"
   ],
   "concept_summary": {
     "spatial": [

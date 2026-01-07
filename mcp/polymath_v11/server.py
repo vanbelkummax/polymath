@@ -17,12 +17,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Add lib to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
-
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+
+# Add repo root to path so `lib.*` imports resolve correctly.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
 # Import tool modules
 from tools.discovery import DiscoveryTools
