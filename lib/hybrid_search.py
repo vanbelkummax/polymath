@@ -11,18 +11,19 @@ from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 import asyncio
 
-# Config
-CHROMA_PATH = os.environ.get("CHROMA_PATH", "/home/user/work/polymax/chromadb/polymath_v2")
-POSTGRES_URL = os.environ.get("POSTGRES_URL", "dbname=polymath user=polymath host=/var/run/postgresql")
-NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
-EMBEDDING_MODEL = "all-mpnet-base-v2"  # 768-dim, matches ChromaDB collection
+from lib.config import (
+    CHROMADB_PATH as CHROMA_PATH,
+    POSTGRES_DSN,
+    NEO4J_URI,
+    EMBEDDING_MODEL,
+    PAPERS_COLLECTION,
+    PAPERS_COLLECTION_LEGACY,
+)
 
 logger = logging.getLogger(__name__)
 
 # Import monitoring decorator
 try:
-    import sys
-    sys.path.insert(0, '/home/user/work/polymax')
     from monitoring.metrics_collector import track_query
     MONITORING_ENABLED = True
 except ImportError:
@@ -35,9 +36,7 @@ except ImportError:
 
 # Rosetta Stone query expansion
 try:
-    import sys
-    sys.path.insert(0, '/home/user/work/polymax/lib')
-    from rosetta_query_expander import expand_query_with_llm
+    from lib.rosetta_query_expander import expand_query_with_llm
     ROSETTA_AVAILABLE = True
 except Exception:
     ROSETTA_AVAILABLE = False
@@ -125,20 +124,22 @@ class HybridSearcher:
     def _get_chroma(self):
         if self._chroma is None:
             import chromadb
-            client = chromadb.PersistentClient(path=CHROMA_PATH)
-            self._chroma = client.get_collection("polymath_corpus")
+            client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+            try:
+                self._chroma = client.get_collection(PAPERS_COLLECTION)
+            except Exception:
+                try:
+                    self._chroma = client.get_collection(PAPERS_COLLECTION_LEGACY)
+                except Exception as exc:
+                    logger.warning(f"ChromaDB collection not found: {exc}")
+                    return None
         return self._chroma
     
     def _get_postgres(self):
         if self._pg is None:
             try:
                 import psycopg2
-                # Use explicit params to avoid env var format issues
-                self._pg = psycopg2.connect(
-                    dbname='polymath',
-                    user='polymath',
-                    host='/var/run/postgresql'
-                )
+                self._pg = psycopg2.connect(POSTGRES_DSN)
             except Exception as e:
                 logger.debug(f"Postgres connection failed: {e}")
                 pass  # Postgres not configured yet
@@ -167,6 +168,8 @@ class HybridSearcher:
     def vector_search(self, query: str, n: int = 20) -> List[SearchResult]:
         """Dense vector search via ChromaDB."""
         coll = self._get_chroma()
+        if coll is None:
+            return []
         query_embedding = self._encode_query(query)
         results = coll.query(query_embeddings=query_embedding, n_results=n)
 

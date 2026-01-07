@@ -330,6 +330,9 @@ class DiscoveryTools:
         result = db.fetch_one("SELECT COUNT(*) as cnt FROM artifacts")
         artifact_count = result['cnt'] if result else 0
 
+        result = db.fetch_one("SELECT COUNT(*) as cnt FROM documents")
+        document_count = result['cnt'] if result else 0
+
         result = db.fetch_one("SELECT COUNT(*) as cnt FROM passages WHERE page_num >= 0")
         citable_passages = result['cnt'] if result else 0
 
@@ -338,7 +341,7 @@ class DiscoveryTools:
 
         # Recency check
         result = db.fetch_one("""
-            SELECT COUNT(*) as cnt FROM artifacts
+            SELECT COUNT(*) as cnt FROM documents
             WHERE year IS NOT NULL
             AND year >= 2024
         """)
@@ -348,10 +351,10 @@ class DiscoveryTools:
         citability_rate = citable_passages / total_passages if total_passages > 0 else 0
 
         issues = []
-        if recent_papers < artifact_count * 0.1:
+        if document_count and recent_papers < document_count * 0.1:
             issues.append({
                 "type": "recency",
-                "description": f"Only {recent_papers} papers from 2024+ ({100*recent_papers/artifact_count:.1f}%)",
+                "description": f"Only {recent_papers} papers from 2024+ ({100*recent_papers/document_count:.1f}%)",
                 "action": "Run Literature Sentry with recent filter"
             })
 
@@ -365,6 +368,7 @@ class DiscoveryTools:
         return {
             "status": "healthy" if len(issues) == 0 else "needs_attention",
             "stats": {
+                "total_documents": document_count,
                 "total_artifacts": artifact_count,
                 "total_passages": total_passages,
                 "citable_passages": citable_passages,

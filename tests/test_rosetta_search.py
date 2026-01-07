@@ -7,15 +7,15 @@ from datetime import datetime
 import sys
 import os
 
-# Add root to path for imports
-sys.path.insert(0, '/home/user/work/polymax')
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from lib.rosetta_query_expander import expand_query
+from lib.config import CHROMADB_PATH, PAPERS_COLLECTION, PAPERS_COLLECTION_LEGACY, EMBEDDING_MODEL
 
 # Configuration
-GOLDEN_SET_PATH = Path("/home/user/work/polymax/tests/data/golden_queries.json")
-CHROMADB_PATH = "/home/user/work/polymax/chromadb/polymath_v2"
-COLLECTION_NAME = "polymath_corpus"
-EMBEDDING_MODEL = "all-mpnet-base-v2"
+GOLDEN_SET_PATH = ROOT / "tests" / "data" / "golden_queries.json"
+COLLECTION_NAME = PAPERS_COLLECTION
 TOP_K = 10
 
 def load_golden_set():
@@ -23,7 +23,7 @@ def load_golden_set():
         return json.load(f)
 
 def get_db_client():
-    return chromadb.PersistentClient(path=CHROMADB_PATH)
+    return chromadb.PersistentClient(path=str(CHROMADB_PATH))
 
 def get_model():
     print(f"Loading embedding model: {EMBEDDING_MODEL}...")
@@ -79,7 +79,11 @@ def run_tests():
     
     queries = load_golden_set()
     client = get_db_client()
-    collection = client.get_collection(COLLECTION_NAME)
+    collection = None
+    try:
+        collection = client.get_collection(COLLECTION_NAME)
+    except Exception:
+        collection = client.get_collection(PAPERS_COLLECTION_LEGACY)
     model = get_model()
     
     total_score = 0
@@ -129,7 +133,7 @@ def run_tests():
     print(f"Final Score: {total_score}/{len(queries)} ({avg_score*100:.1f}%)")
     
     # Save results
-    output_file = f"/home/user/work/polymax/tests/results_rosetta_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    output_file = str(ROOT / "tests" / f"results_rosetta_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
     with open(output_file, 'w') as f:
         json.dump(results_log, f, indent=2)
         

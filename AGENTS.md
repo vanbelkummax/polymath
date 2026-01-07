@@ -1,7 +1,7 @@
 # Polymath System - Codex Instructions
 
 ## Overview
-Polymath is a polymathic research platform with 545K+ paper passages and 416K+ code chunks indexed.
+Polymath is a polymathic research platform with ~545K paper passages and ~415K code chunks indexed.
 
 ## Quick Commands
 
@@ -66,6 +66,13 @@ export PYTHONPATH=/home/user/polymath-repo:$PYTHONPATH
 cd /home/user/polymath-repo
 ```
 
+## Codex MCP (polymath-v11)
+- MCP config: `/home/user/.codex/config.toml` (restart Codex after edits)
+- Server: `/home/user/polymath-repo/mcp/polymath_v11/server.py`
+- Backing stores: Postgres (FTS), ChromaDB (BGE-M3), Neo4j (graph)
+- Only `polymath-v11` is enabled by default to avoid startup timeouts
+- Secrets are stored in config; do not paste into docs or chat
+
 ## Database Locations
 - PostgreSQL: `psql -U polymath -d polymath`
 - ChromaDB: `/home/user/polymath-repo/chromadb/`
@@ -75,6 +82,7 @@ cd /home/user/polymath-repo
 - Papers staging: `/home/user/work/polymax/ingest_staging/`
 - GitHub repos: `/home/user/work/polymax/data/github_repos/`
 - Logs: `/home/user/work/polymax/logs/`
+- Full system map: `/home/user/polymath-repo/SYSTEM_DEPENDENCIES.md`
 
 ## Playbooks
 - Academic workflows: `docs/ACADEMIC_PLAYBOOK.md`
@@ -82,7 +90,7 @@ cd /home/user/polymath-repo
 
 ## Coverage (as of 2026-01-07)
 - 29,485 documents
-- 545,258 passages
+- 545,210 passages
 - 416,397 code chunks
 - Strong: spatial, visium, xenium, transformer, segmentation
 - See: `docs/hackathon_reports/HACKATHON_AUDIT.md`

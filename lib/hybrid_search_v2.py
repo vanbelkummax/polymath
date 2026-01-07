@@ -3,8 +3,8 @@
 Hybrid Search v2 - Two-Collection Architecture
 
 Supports:
-- polymath_papers: Scientific papers with year, concepts, section filtering
-- polymath_code: Code chunks with repo, language, chunk_type filtering
+- polymath_bge_m3: Scientific papers with year, concepts, section filtering
+- polymath_code_bge_m3: Code chunks with repo, language, chunk_type filtering
 
 Usage:
     from lib.hybrid_search_v2 import HybridSearcherV2, SearchResult
@@ -156,8 +156,8 @@ class HybridSearcherV2:
     Multi-index searcher with two-collection architecture.
 
     Collections:
-    - polymath_papers: Papers with year, concepts, doi, pmid
-    - polymath_code: Code with repo, language, chunk_type, concepts
+    - polymath_bge_m3: Papers with year, concepts, doi, pmid
+    - polymath_code_bge_m3: Code with repo, language, chunk_type, concepts
 
     Features:
     - Cross-encoder reranking for improved relevance

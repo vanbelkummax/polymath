@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 """
-Unified Search for Polymath - Query both code and papers
+Unified Search for Polymath - Query both code and papers (BGE-M3 default)
 Returns clearly labeled results from each source.
 """
 
 import argparse
-import chromadb
+import sys
+from pathlib import Path
 from typing import List, Dict, Tuple
+
+import chromadb
 from sentence_transformers import SentenceTransformer
 
-CHROMADB_PATH = "/home/user/work/polymax/chromadb/polymath_v2"
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-# Embedding models - must match what was used during ingestion
-PAPER_MODEL = "intfloat/e5-base-v2"  # 768-dim, used for papers
-CODE_MODEL = "all-MiniLM-L6-v2"  # 384-dim, ChromaDB default
+from lib.config import CHROMADB_PATH, PAPERS_COLLECTION, CODE_COLLECTION, EMBEDDING_MODEL
+
+# Embedding model - must match what was used during ingestion
+PAPER_MODEL = EMBEDDING_MODEL
+CODE_MODEL = EMBEDDING_MODEL
 
 # Cache models
 _models = {}
@@ -53,7 +59,7 @@ def search_papers(client, query: str, n: int = 5) -> List[Dict]:
         model = get_model(PAPER_MODEL)
         embedding = model.encode([query])[0].tolist()
 
-        coll = client.get_collection('polymath_corpus')
+        coll = client.get_collection(PAPERS_COLLECTION)
         results = coll.query(
             query_embeddings=[embedding],
             n_results=n,
@@ -66,7 +72,7 @@ def search_papers(client, query: str, n: int = 5) -> List[Dict]:
             results['metadatas'][0],
             results['distances'][0]
         )):
-            title = meta.get('title', 'Unknown')[:80]
+            title = (meta.get('title') or meta.get('doc_title') or meta.get('paper_title') or 'Unknown')[:80]
             output.append({
                 'source': 'paper',
                 'type': 'paper_chunk',
@@ -88,7 +94,7 @@ def search_code(client, query: str, n: int = 5) -> List[Dict]:
         model = get_model(CODE_MODEL)
         embedding = model.encode([query])[0].tolist()
 
-        coll = client.get_collection('code_corpus')
+        coll = client.get_collection(CODE_COLLECTION)
         results = coll.query(
             query_embeddings=[embedding],
             n_results=n,
@@ -101,10 +107,10 @@ def search_code(client, query: str, n: int = 5) -> List[Dict]:
             results['metadatas'][0],
             results['distances'][0]
         )):
-            type_ = meta.get('type', 'code')
-            name = meta.get('name', 'unknown')
-            repo = meta.get('repo', '')
-            file_ = meta.get('file', '').split('/')[-1]
+            type_ = meta.get('chunk_type') or meta.get('type', 'code')
+            name = meta.get('name') or meta.get('symbol') or 'unknown'
+            repo = meta.get('repo_name') or meta.get('repo', '')
+            file_ = (meta.get('file_path') or meta.get('file') or '').split('/')[-1]
 
             output.append({
                 'source': 'code',
@@ -134,7 +140,7 @@ def unified_search(query: str, n_each: int = 5, source: str = 'all') -> Tuple[Li
     Returns:
         Tuple of (paper_results, code_results)
     """
-    client = chromadb.PersistentClient(path=CHROMADB_PATH)
+    client = chromadb.PersistentClient(path=str(CHROMADB_PATH))
 
     papers = []
     code = []

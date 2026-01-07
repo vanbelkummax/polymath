@@ -5,7 +5,7 @@
 |----------|----------|------|
 | Main Code | `/home/user/polymath-repo/` | 8.8 GB |
 | ChromaDB (active) | `/home/user/polymath-repo/chromadb/` | 8.7 GB |
-| ChromaDB (backup) | `/home/user/work/polymax/chromadb/` | 7.7 GB |
+| ChromaDB (legacy) | `/home/user/work/polymax/chromadb/` | 7.7 GB |
 | GitHub Repos | `/home/user/work/polymax/data/github_repos/` | 26 GB |
 | HuggingFace Models | `~/.cache/huggingface/hub/` | 8.5 GB |
 | PostgreSQL | `/var/lib/postgresql/` | ~2 GB |
@@ -16,23 +16,30 @@
 
 ## 1. ENVIRONMENT VARIABLES (Required)
 
-**File**: `/home/user/work/polymax/.env`
+**File**: `/home/user/polymath-repo/.env` (source of truth; `/home/user/work/polymax/.env` mirrors it)
 
 ```bash
 # Database
+POLYMATH_ROOT=/home/user/polymath-repo
 NEO4J_PASSWORD=polymathic2026
 POSTGRES_DSN=dbname=polymath user=polymath host=/var/run/postgresql
 
 # API Keys
 BRAVE_API_KEY=<your_brave_api_key>
-OPENALEX_API_KEY=<your_openalex_key>
+OPENALEX_EMAIL=<your_email_for_polite_pool>
+OPENALEX_API_KEY=<optional_key>
 HUGGINGFACE_TOKEN=<optional>
 
 # Paths (optional - have defaults)
+CHROMADB_PATH=/home/user/polymath-repo/chromadb
+# Legacy scripts still read CHROMA_PATH (alias to BGE-M3 store)
 CHROMA_PATH=/home/user/polymath-repo/chromadb
+# Legacy store (archived): /home/user/work/polymax/chromadb
 ```
 
-**Load with**: `export $(cat /home/user/work/polymax/.env | xargs)`
+**Load with**: `set -a && source /home/user/polymath-repo/.env && set +a`
+
+Codex MCP config (separate): `/home/user/.codex/config.toml`
 
 ---
 
@@ -44,7 +51,7 @@ Connection: psql -U polymath -d polymath
 Location: /var/lib/postgresql/
 Tables:
   - documents: 29,485 rows
-  - passages: 545,258 rows
+  - passages: 545,210 rows
   - code_files: 65,441 rows
   - code_chunks: 416,397 rows
   - concepts: 200 rows
@@ -54,8 +61,8 @@ Tables:
 ```
 Location: /home/user/polymath-repo/chromadb/
 Collections:
-  - polymath_bge_m3: 545K paper passages (1024-dim)
-  - polymath_code_bge_m3: 416K code chunks (1024-dim)
+  - polymath_bge_m3: 545,099 paper passages (1024-dim)
+  - polymath_code_bge_m3: 415,468 code chunks (1024-dim)
 Embedding Model: BAAI/bge-m3
 ```
 
@@ -65,10 +72,10 @@ Connection: bolt://localhost:7687
 Auth: neo4j / polymathic2026
 Location: /var/lib/neo4j/
 Nodes:
-  - Paper: 31,867
+  - Paper: 31,996
   - Concept: 222
   - Code: 13,651
-Edges: 26,820
+Edges: 27,395
 ```
 
 ---
@@ -102,7 +109,7 @@ lib/
 ### Scripts (`scripts/`)
 ```
 scripts/
-├── migrate_knowledge_base.py  # Rebuild ChromaDB from Postgres
+├── migrate_knowledge_base.py  # BGE-M3 migration (Postgres → Chroma/Neo4j)
 ├── hackathon_audit.py         # Coverage audit
 ├── hydrate_neo4j.py           # Sync Neo4j from Postgres
 ├── ingest_github_batch.py     # Batch repo ingestion
@@ -124,10 +131,10 @@ mcp/
 
 ### Entry Points
 ```
-polymath_cli.py    # CLI tool (Typer)
+polymath_cli.py    # CLI tool (argparse)
 codex_tools.py     # Codex-compatible wrapper
 AGENTS.md          # Codex instructions
-CLAUDE.md          # Claude instructions (symlink to ~/CLAUDE.md)
+/home/user/CLAUDE.md  # Claude instructions (outside repo)
 ```
 
 ---

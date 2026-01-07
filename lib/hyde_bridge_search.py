@@ -8,14 +8,18 @@ a bridge document, then searching for real papers matching that semantic space.
 Core Insight: The bridge exists in LOGIC, not VOCABULARY.
 """
 
-import sys
-sys.path.insert(0, '/home/user/work/polymax/lib')
-sys.path.insert(0, '/home/user/work/polymax/mcp')
+import os
+from typing import List, Dict, Tuple
 
 import chromadb
 from sentence_transformers import SentenceTransformer
-from typing import List, Dict, Tuple
-import os
+
+from lib.config import (
+    CHROMADB_PATH,
+    EMBEDDING_MODEL,
+    PAPERS_COLLECTION,
+    PAPERS_COLLECTION_LEGACY,
+)
 
 
 class HyDEBridgeSearcher:
@@ -38,15 +42,16 @@ class HyDEBridgeSearcher:
 
     def _get_chroma(self):
         if self._chroma is None:
-            client = chromadb.PersistentClient(
-                path=os.environ.get("CHROMA_PATH", "/home/user/work/polymax/chromadb/polymath_v2")
-            )
-            self._chroma = client.get_collection("polymath_corpus")
+            client = chromadb.PersistentClient(path=str(CHROMADB_PATH))
+            try:
+                self._chroma = client.get_collection(PAPERS_COLLECTION)
+            except Exception:
+                self._chroma = client.get_collection(PAPERS_COLLECTION_LEGACY)
         return self._chroma
 
     def _get_embedder(self):
         if self._embedder is None:
-            self._embedder = SentenceTransformer("all-mpnet-base-v2")
+            self._embedder = SentenceTransformer(EMBEDDING_MODEL)
         return self._embedder
 
     def generate_hypothetical_bridge(

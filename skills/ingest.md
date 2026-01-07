@@ -11,22 +11,22 @@ Ingest papers or code into the Polymath knowledge system, updating all stores at
 
 ```bash
 # Ingest single PDF
-python3 /home/user/work/polymax/lib/unified_ingest.py "/path/to/paper.pdf"
+python3 /home/user/polymath-repo/lib/unified_ingest.py "/path/to/paper.pdf"
 
 # Ingest from Windows Downloads (copy first for speed)
 cp "/mnt/c/Users/User/Downloads/"*.pdf /home/user/work/polymax/ingest_staging/
-python3 /home/user/work/polymax/lib/unified_ingest.py /home/user/work/polymax/ingest_staging/ --move
+python3 /home/user/polymath-repo/lib/unified_ingest.py /home/user/work/polymax/ingest_staging/ --move
 
 # Ingest code
-python3 /home/user/work/polymax/lib/unified_ingest.py "/path/to/code.py" --type code
+python3 /home/user/polymath-repo/lib/unified_ingest.py "/path/to/code.py" --type code
 
 # Ingest code directory
-python3 /home/user/work/polymax/lib/unified_ingest.py "/path/to/repo/" --type code
+python3 /home/user/polymath-repo/lib/unified_ingest.py "/path/to/repo/" --type code
 ```
 
 ## What Gets Updated
 
-1. **ChromaDB** (`polymath_v2`): Chunked text with embeddings
+1. **ChromaDB** (`polymath_bge_m3`): Chunked text with embeddings
 2. **Neo4j**: Paper/Code nodes with MENTIONS/USES relationships to concepts
 3. **Postgres** (when available): Canonical metadata
 
@@ -52,12 +52,12 @@ For scanned PDFs with no extractable text:
 
 Check stats:
 ```bash
-python3 /home/user/work/polymax/polymath_cli.py stats
+python3 /home/user/polymath-repo/polymath_cli.py stats
 ```
 
 Verify a paper was added:
 ```bash
-python3 /home/user/work/polymax/polymath_cli.py search "title or topic"
+python3 /home/user/polymath-repo/polymath_cli.py search "title or topic"
 ```
 
 ## MCP Tool

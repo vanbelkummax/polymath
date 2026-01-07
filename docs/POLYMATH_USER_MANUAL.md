@@ -79,7 +79,7 @@ Polymath uses a polyglot persistence architecture where each database excels at 
         ▼             ▼             ▼
 ┌─────────────┐ ┌──────────┐ ┌────────────┐
 │  ChromaDB   │ │ Postgres │ │   Neo4j    │
-│  807K vecs  │ │  (FTS)   │ │  (graph)   │
+│  960K vecs  │ │  (FTS)   │ │  (graph)   │
 │  2 colls    │ │  SoR     │ │ 32K nodes  │
 └─────────────┘ └──────────┘ └────────────┘
 ```
@@ -92,8 +92,8 @@ Polymath uses a polyglot persistence architecture where each database excels at 
 #### ChromaDB (Vector Store)
 - **Role**: Semantic similarity search via embeddings
 - **Collections**:
-  - `polymath_papers`: 395,683 passage embeddings
-  - `polymath_code`: 411,729 code chunk embeddings
+  - `polymath_bge_m3`: 545,099 passage embeddings
+  - `polymath_code_bge_m3`: 415,468 code chunk embeddings
 - **Why**: Sub-second semantic search, filtering by year/concept/language
 
 #### Neo4j (Knowledge Graph)
@@ -667,15 +667,15 @@ steps tailored for competitive hackathon use.
 
 | Component | Path |
 |-----------|------|
-| System home | `/home/user/work/polymax/` |
-| ChromaDB | `/home/user/work/polymax/chromadb/` |
-| Hybrid search | `/home/user/work/polymax/lib/hybrid_search_v2.py` |
-| MCP server | `/home/user/work/polymax/mcp/polymath_v11/server.py` |
-| Literature Sentry | `/home/user/work/polymax/lib/sentry/` |
-| Evidence system | `/home/user/work/polymax/lib/evidence_extractor.py` |
+| System home (code) | `/home/user/polymath-repo/` |
+| ChromaDB | `/home/user/polymath-repo/chromadb/` |
+| Hybrid search | `/home/user/polymath-repo/lib/hybrid_search_v2.py` |
+| MCP server | `/home/user/polymath-repo/mcp/polymath_v11/server.py` |
+| Literature Sentry | `/home/user/polymath-repo/lib/sentry/` |
+| Evidence system | `/home/user/polymath-repo/lib/evidence_extractor.py` |
 | GitHub repos | `/home/user/work/polymax/data/github_repos/` |
 | Ingestion staging | `/home/user/work/polymax/ingest_staging/` |
-| Skills | `/home/user/work/polymax/skills/` |
+| Skills | `/home/user/polymath-repo/skills/` |
 
 ## Appendix B: Database Connections
 
@@ -683,17 +683,23 @@ steps tailored for competitive hackathon use.
 |----------|------------|
 | PostgreSQL | `psql -U polymath -d polymath` |
 | Neo4j | `bolt://localhost:7687` (neo4j/polymathic2026) |
-| ChromaDB | `chromadb.PersistentClient('/home/user/work/polymax/chromadb')` |
+| ChromaDB | `chromadb.PersistentClient('/home/user/polymath-repo/chromadb')` |
 
 ## Appendix C: Environment Variables
 
 ```bash
+POLYMATH_ROOT=/home/user/polymath-repo
 NEO4J_PASSWORD=polymathic2026
 BRAVE_API_KEY=<your_key>
-POSTGRES_URL=dbname=polymath user=polymath host=/var/run/postgresql
+POSTGRES_DSN=dbname=polymath user=polymath host=/var/run/postgresql
+CHROMADB_PATH=/home/user/polymath-repo/chromadb
+CHROMA_PATH=/home/user/polymath-repo/chromadb
+EMBEDDING_MODEL=BAAI/bge-m3
+PAPERS_COLLECTION=polymath_bge_m3
+CODE_COLLECTION=polymath_code_bge_m3
 
 # Load all:
-export $(cat /home/user/work/polymax/.env | xargs)
+set -a && source /home/user/polymath-repo/.env && set +a
 ```
 
 ---

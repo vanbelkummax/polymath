@@ -28,16 +28,19 @@ sys.path.insert(0, str(ROOT))
 from lib.config import (
     CHROMADB_PATH as CONFIG_CHROMADB_PATH,
     PAPERS_COLLECTION as CONFIG_PAPERS_COLLECTION,
+    CODE_COLLECTION as CONFIG_CODE_COLLECTION,
     EMBEDDING_MODEL as CONFIG_EMBEDDING_MODEL,
     NEO4J_URI as CONFIG_NEO4J_URI,
     NEO4J_USER as CONFIG_NEO4J_USER,
     NEO4J_PASSWORD as CONFIG_NEO4J_PASSWORD,
     BRAVE_API_KEY as CONFIG_BRAVE_API_KEY,
+    POSTGRES_DSN as CONFIG_POSTGRES_DSN,
 )
 
 # Configuration
 CHROMADB_PATH = str(CONFIG_CHROMADB_PATH)
 PAPERS_COLLECTION = CONFIG_PAPERS_COLLECTION
+CODE_COLLECTION = CONFIG_CODE_COLLECTION
 EMBEDDING_MODEL = CONFIG_EMBEDDING_MODEL
 PAPERS_DB = "/home/user/mcp_servers/polymax-synthesizer/papers.db"
 NEO4J_URI = CONFIG_NEO4J_URI
@@ -737,11 +740,20 @@ def get_system_stats() -> Dict:
 
     # ChromaDB stats
     try:
+        client = None
         coll, _ = get_chroma_collection()
         stats["chromadb"] = {
-            "total_chunks": coll.count(),
-            "collection": "polymath_corpus"
+            "papers_collection": PAPERS_COLLECTION,
+            "papers_count": coll.count(),
         }
+        try:
+            import chromadb
+            client = chromadb.PersistentClient(path=CHROMADB_PATH)
+            code_coll = client.get_collection(CODE_COLLECTION)
+            stats["chromadb"]["code_collection"] = CODE_COLLECTION
+            stats["chromadb"]["code_count"] = code_coll.count()
+        except Exception as e:
+            stats["chromadb"]["code_error"] = str(e)
     except Exception as e:
         stats["chromadb"] = {"error": str(e)}
 
@@ -755,15 +767,21 @@ def get_system_stats() -> Dict:
     # Postgres stats (if available)
     try:
         import psycopg2
-        conn = psycopg2.connect(os.environ.get("POSTGRES_URL", "postgresql://localhost:5432/polymath"))
+        conn = psycopg2.connect(CONFIG_POSTGRES_DSN)
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM artifacts")
-        artifact_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM chunks")
-        chunk_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM documents")
+        document_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM passages")
+        passage_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM code_files")
+        code_file_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM code_chunks")
+        code_chunk_count = cursor.fetchone()[0]
         stats["postgres"] = {
-            "artifacts": artifact_count,
-            "chunks": chunk_count
+            "documents": document_count,
+            "passages": passage_count,
+            "code_files": code_file_count,
+            "code_chunks": code_chunk_count
         }
         conn.close()
     except Exception:

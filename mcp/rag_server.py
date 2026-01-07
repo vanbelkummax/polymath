@@ -12,18 +12,28 @@ Tools:
 import json
 import sys
 import os
+from pathlib import Path
+
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-# Configuration - fresh ChromaDB on Linux ext4 (fast!)
-CHROMADB_BASE = "/home/user/work/polymax/chromadb"
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from lib.config import (
+    CHROMADB_PATH,
+    EMBEDDING_MODEL,
+    PAPERS_COLLECTION,
+)
+
+# Configuration - BGE-M3 default store
 COLLECTION_PATHS = [
-    (f"{CHROMADB_BASE}/polymath_v2", "polymath_corpus"),  # Migrated fresh collection
+    (str(CHROMADB_PATH), PAPERS_COLLECTION),
 ]
 
 # Initialize embedding model
-print("Loading embedding model...", file=sys.stderr)
-model = SentenceTransformer('all-mpnet-base-v2')
+print(f"Loading embedding model: {EMBEDDING_MODEL}...", file=sys.stderr)
+model = SentenceTransformer(EMBEDDING_MODEL)
 
 def semantic_search(query: str, n_results: int = 10, collection_name: str = None) -> dict:
     """
