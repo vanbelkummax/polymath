@@ -17,10 +17,12 @@ import argparse
 import json
 import sys
 import os
+from pathlib import Path
 
 # Add MCP directory to path
-sys.path.insert(0, '/home/user/work/polymax/mcp')
-sys.path.insert(0, '/home/user/work/polymax')  # Add root for lib imports
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT / "mcp"))
+sys.path.insert(0, str(ROOT))  # Add repo root for lib imports
 
 # Import monitoring decorator
 try:
@@ -36,7 +38,7 @@ except ImportError:
 
 # Import Rosetta Stone
 try:
-    sys.path.insert(0, '/home/user/work/polymax/lib')
+    sys.path.insert(0, str(ROOT / "lib"))
     from rosetta_query_expander import expand_query_with_llm
     ROSETTA_AVAILABLE = True
 except Exception:
@@ -233,9 +235,33 @@ Examples:
 
         # Also show ChromaDB stats
         import chromadb
-        client = chromadb.PersistentClient(path="/home/user/work/polymax/chromadb/polymath_v2")
-        coll = client.get_collection("polymath_corpus")
-        print(f"\nChromaDB Chunks: {coll.count()}")
+        from lib.config import (
+            CHROMADB_PATH, PAPERS_COLLECTION, CODE_COLLECTION,
+            PAPERS_COLLECTION_LEGACY, CODE_COLLECTION_LEGACY
+        )
+        from pathlib import Path
+
+        legacy_path = Path("/home/user/work/polymax/chromadb")
+        client = chromadb.PersistentClient(path=str(CHROMADB_PATH))
+        collections = client.list_collections()
+        collection_names = [c.name for c in collections]
+
+        if not collection_names and legacy_path.exists() and CHROMADB_PATH != legacy_path:
+            client = chromadb.PersistentClient(path=str(legacy_path))
+            collections = client.list_collections()
+            collection_names = [c.name for c in collections]
+
+        if collection_names:
+            papers_name = PAPERS_COLLECTION if PAPERS_COLLECTION in collection_names else PAPERS_COLLECTION_LEGACY
+            code_name = CODE_COLLECTION if CODE_COLLECTION in collection_names else CODE_COLLECTION_LEGACY
+            if papers_name in collection_names:
+                papers = client.get_collection(papers_name)
+                print(f"\nChromaDB Papers: {papers.count()}")
+            if code_name in collection_names:
+                code = client.get_collection(code_name)
+                print(f"ChromaDB Code: {code.count()}")
+        else:
+            print("\nChromaDB: no collections found")
 
     elif args.command == 'abstract':
         result = abstract_problem(args.problem)

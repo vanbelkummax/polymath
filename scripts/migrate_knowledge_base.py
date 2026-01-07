@@ -19,11 +19,22 @@ Usage:
 import os
 import sys
 import json
+import shutil
 import logging
 import argparse
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
+
+
+def check_disk_space(min_gb: int = 50) -> bool:
+    """Check if enough disk space is available. Returns False if critically low."""
+    usage = shutil.disk_usage("/")
+    free_gb = usage.free / (1024**3)
+    if free_gb < min_gb:
+        logging.error(f"🛑 DISK SPACE CRITICAL: Only {free_gb:.1f}GB free (need {min_gb}GB minimum)")
+        return False
+    return True
 
 # Add lib to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -159,11 +170,13 @@ class KnowledgeBaseMigrator:
 
     def _embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Embed a batch of texts."""
+        # Access embedder FIRST to ensure _use_flag_model is set
+        embedder = self.embedder
         if getattr(self, '_use_flag_model', False):
-            result = self.embedder.encode(texts, return_dense=True)
+            result = embedder.encode(texts, return_dense=True)
             return result['dense_vecs'].tolist()
         else:
-            return self.embedder.encode(texts).tolist()
+            return embedder.encode(texts).tolist()
 
     def _get_or_create_collection(self, name: str):
         """Get or create ChromaDB collection with correct dimensionality."""
@@ -178,34 +191,39 @@ class KnowledgeBaseMigrator:
     def fetch_passages(self, batch_size: int = 1000, offset: int = 0) -> List[Dict]:
         """Fetch passages from Postgres."""
         cursor = self.pg_conn.cursor()
+        # Use actual column names: passage_id, passage_text (not id, content)
+        # Join with documents table (not artifacts) for metadata
         cursor.execute("""
-            SELECT p.id, p.doc_id, p.chunk_index, p.content, p.page_num,
-                   a.title, a.doi, a.year
+            SELECT p.passage_id, p.doc_id, p.page_num, p.page_char_start, p.passage_text,
+                   d.title, d.doi, d.year
             FROM passages p
-            LEFT JOIN artifacts a ON p.doc_id = a.doc_id
-            WHERE p.content IS NOT NULL AND LENGTH(p.content) > 50
-            ORDER BY p.id
+            LEFT JOIN documents d ON p.doc_id = d.doc_id
+            WHERE p.passage_text IS NOT NULL AND LENGTH(p.passage_text) > 50
+            ORDER BY p.passage_id
             LIMIT %s OFFSET %s
         """, (batch_size, offset))
 
-        columns = ['id', 'doc_id', 'chunk_index', 'content', 'page_num',
+        columns = ['id', 'doc_id', 'page_num', 'chunk_index', 'content',
                    'title', 'doi', 'year']
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def fetch_code_chunks(self, batch_size: int = 1000, offset: int = 0) -> List[Dict]:
         """Fetch code chunks from Postgres."""
         cursor = self.pg_conn.cursor()
+        # Use actual column names: chunk_id (not id)
+        # Join with code_files for repo_name, file_path, language
         cursor.execute("""
-            SELECT id, repo_name, file_path, chunk_type, content,
-                   start_line, end_line, language
-            FROM code_chunks
-            WHERE content IS NOT NULL AND LENGTH(content) > 20
-            ORDER BY id
+            SELECT c.chunk_id, f.repo_name, f.file_path, c.chunk_type, c.content,
+                   c.start_line, c.end_line, f.language, c.concepts
+            FROM code_chunks c
+            LEFT JOIN code_files f ON c.file_id = f.file_id
+            WHERE c.content IS NOT NULL AND LENGTH(c.content) > 20
+            ORDER BY c.chunk_id
             LIMIT %s OFFSET %s
         """, (batch_size, offset))
 
         columns = ['id', 'repo_name', 'file_path', 'chunk_type', 'content',
-                   'start_line', 'end_line', 'language']
+                   'start_line', 'end_line', 'language', 'concepts']
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def migrate_papers(self, batch_size: int = 100):
@@ -216,13 +234,17 @@ class KnowledgeBaseMigrator:
 
         # Get total count
         cursor = self.pg_conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM passages WHERE content IS NOT NULL AND LENGTH(content) > 50")
+        cursor.execute("SELECT COUNT(*) FROM passages WHERE passage_text IS NOT NULL AND LENGTH(passage_text) > 50")
         total = cursor.fetchone()[0]
 
         offset = self.state.state.get('papers_migrated', 0)
         pbar = tqdm(total=total, initial=offset, desc="Papers")
 
         while offset < total:
+            # Check disk space every 10K passages
+            if offset % 10000 == 0 and not check_disk_space(min_gb=50):
+                raise RuntimeError("Migration stopped: disk space critically low")
+
             passages = self.fetch_passages(batch_size=batch_size, offset=offset)
             if not passages:
                 break
@@ -289,6 +311,7 @@ class KnowledgeBaseMigrator:
                 'start_line': c['start_line'] or 0,
                 'end_line': c['end_line'] or 0,
                 'language': c['language'] or '',
+                'concepts': ",".join(c['concepts']) if isinstance(c.get('concepts'), list) else (c.get('concepts') or ''),
                 'source_model': 'bge_m3_v1'
             } for c in chunks]
 
@@ -315,21 +338,30 @@ class KnowledgeBaseMigrator:
 
         # Get documents that need concept extraction
         cursor = self.pg_conn.cursor()
+        # Use actual column names: passage_text (not content), page_char_start for ordering
+        # Join with documents table (not artifacts) for metadata
         cursor.execute("""
-            SELECT DISTINCT doc_id, title,
-                   (SELECT content FROM passages WHERE doc_id = a.doc_id ORDER BY chunk_index LIMIT 1) as first_chunk
-            FROM artifacts a
-            WHERE a.doc_id IS NOT NULL
+            SELECT DISTINCT d.doc_id, d.title,
+                   (SELECT passage_text FROM passages WHERE doc_id = d.doc_id ORDER BY page_num, page_char_start LIMIT 1) as first_chunk
+            FROM documents d
+            WHERE d.doc_id IS NOT NULL
         """)
         docs = cursor.fetchall()
 
         concepts_count = self.state.state.get('concepts_extracted', 0)
         neo4j_count = self.state.state.get('neo4j_merged', 0)
 
-        pbar = tqdm(docs, desc="Concepts", initial=concepts_count)
+        total_docs = len(docs)
+        if concepts_count:
+            docs = docs[concepts_count:]
 
-        for doc_id, title, first_chunk in pbar:
+        pbar = tqdm(total=total_docs, initial=concepts_count, desc="Concepts")
+
+        for doc_id, title, first_chunk in docs:
             if first_chunk is None:
+                concepts_count += 1
+                self.state.update(concepts_extracted=concepts_count, neo4j_merged=neo4j_count)
+                pbar.update(1)
                 continue
 
             # Combine title and first chunk for context
@@ -346,6 +378,7 @@ class KnowledgeBaseMigrator:
 
             concepts_count += 1
             self.state.update(concepts_extracted=concepts_count, neo4j_merged=neo4j_count)
+            pbar.update(1)
 
         pbar.close()
         logger.info(f"Concept extraction complete: {concepts_count} docs, {neo4j_count} concept links")
@@ -359,11 +392,11 @@ class KnowledgeBaseMigrator:
                 concept_norm = concept.lower().strip().replace(' ', '_')
 
                 session.run("""
-                    MERGE (c:Concept {name: $concept})
+                    MERGE (c:CONCEPT {name: $concept})
                     ON CREATE SET c.created_at = datetime()
                     WITH c
-                    MERGE (d:Document {doc_id: $doc_id})
-                    MERGE (d)-[r:MENTIONS]->(c)
+                    MERGE (p:Paper {doc_id: $doc_id})
+                    MERGE (p)-[r:MENTIONS]->(c)
                     ON CREATE SET r.source_model = 'llm_bge_v1', r.created_at = datetime()
                     ON MATCH SET r.source_model = 'llm_bge_v1', r.updated_at = datetime()
                 """, concept=concept_norm, doc_id=doc_id)
@@ -405,20 +438,20 @@ class KnowledgeBaseMigrator:
         try:
             with self.neo4j_driver.session() as session:
                 result = session.run("""
-                    MATCH (d:Document)-[r:MENTIONS {source_model: 'llm_bge_v1'}]->(c:Concept)
+                    MATCH (p:Paper)-[r:MENTIONS {source_model: 'llm_bge_v1'}]->(c:CONCEPT)
                     RETURN COUNT(r) as count
                 """)
                 results['neo4j']['llm_relationships'] = result.single()['count']
 
                 # Count concepts
-                result = session.run("MATCH (c:Concept) RETURN COUNT(c) as count")
+                result = session.run("MATCH (c:CONCEPT) RETURN COUNT(c) as count")
                 results['neo4j']['total_concepts'] = result.single()['count']
         except Exception as e:
             results['neo4j']['error'] = str(e)
 
         return results
 
-    def run(self, resume: bool = False, verify_only: bool = False):
+    def run(self, resume: bool = False, verify_only: bool = False, batch_size: int = 100):
         """Run the full migration."""
         # CRITICAL: Verify Postgres has data before starting migration
         # Postgres is the Source of Truth - we cannot migrate without it
@@ -439,6 +472,9 @@ class KnowledgeBaseMigrator:
 
             logger.info(f"✓ Postgres verified: {passage_count:,} passages available for migration")
 
+        # Store batch_size for use in migrate methods
+        self._batch_size = batch_size
+
         if verify_only:
             results = self.verify_migration()
             print(json.dumps(results, indent=2))
@@ -455,16 +491,16 @@ class KnowledgeBaseMigrator:
             }
             self.state.save()
 
-        logger.info(f"Starting migration (dry_run={self.dry_run}, resume={resume})")
+        logger.info(f"Starting migration (dry_run={self.dry_run}, resume={resume}, batch_size={batch_size})")
 
         # Step 1: Migrate papers
-        self.migrate_papers()
+        self.migrate_papers(batch_size=batch_size)
 
         # Step 2: Migrate code
-        self.migrate_code()
+        self.migrate_code(batch_size=batch_size)
 
         # Step 3: Extract concepts and link in Neo4j
-        self.extract_and_link_concepts()
+        self.extract_and_link_concepts(batch_size=min(batch_size, 50))
 
         # Mark complete
         self.state.update(completed=True, completed_at=datetime.now().isoformat())
@@ -503,7 +539,7 @@ def main():
     migrator = KnowledgeBaseMigrator(dry_run=not args.apply)
 
     try:
-        migrator.run(resume=args.resume, verify_only=args.verify)
+        migrator.run(resume=args.resume, verify_only=args.verify, batch_size=args.batch_size)
     finally:
         migrator.close()
 

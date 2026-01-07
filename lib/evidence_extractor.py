@@ -333,9 +333,9 @@ class EvidenceExtractor:
 
         # --- STAGE 2: ChromaDB for semantic discovery (uncitable fallback) ---
         try:
-            from lib.hybrid_search import HybridSearcher
-            searcher = HybridSearcher()
-            vector_results = searcher.vector_search(claim, n=limit * 2)
+            from lib.hybrid_search_v2 import HybridSearcherV2
+            searcher = HybridSearcherV2(use_reranker=False)
+            vector_results = searcher.search_papers(claim, n=limit * 2)
 
             for result in vector_results:
                 text_hash = result.content[:100]
@@ -343,12 +343,12 @@ class EvidenceExtractor:
                     continue
                 seen_texts.add(text_hash)
 
-                doc_id = self._resolve_doc_id_from_title(result.title, db)
+                doc_id = result.metadata.get("doc_id") or self._resolve_doc_id_from_title(result.title, db)
 
                 discovery_passages.append({
                     'passage_id': result.id,
                     'doc_id': str(doc_id) if doc_id else result.id,
-                    'page_num': result.metadata.get('page_num', -1),  # -1 = UNCITABLE
+                    'page_num': -1,  # UNCITABLE: ChromaDB discovery only
                     'page_char_start': 0,
                     'page_char_end': len(result.content),
                     'section': result.metadata.get('section', 'body'),

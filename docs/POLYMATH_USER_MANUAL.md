@@ -17,6 +17,8 @@
 5. [Inner Workings](#5-inner-workings)
 6. [Usage Examples](#6-usage-examples)
 7. [Future Directions](#7-future-directions)
+8. [Academic Playbook](#8-academic-playbook)
+9. [Hackathon Playbook](#9-hackathon-playbook)
 
 ---
 
@@ -641,6 +643,25 @@ Specialized agents collaborating on complex tasks:
 | Zotero | User library sync | Planned |
 
 ---
+
+## 8. Academic Playbook
+
+For academic usage patterns and optimization guidance, see:
+
+- `docs/ACADEMIC_PLAYBOOK.md`
+
+This playbook covers evidence-bound writing, systematic reviews,
+method replication, cross-domain hypothesis generation, and QA.
+
+
+## 9. Hackathon Playbook
+
+For the spatial multimodal hackathon workflow, see:
+
+- `docs/HACKATHON_PLAYBOOK.md`
+
+This playbook includes a coverage audit, gap detection, and rapid ingestion
+steps tailored for competitive hackathon use.
 
 ## Appendix A: File Locations
 

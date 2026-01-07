@@ -20,14 +20,30 @@ import sqlite3
 import requests
 from collections import OrderedDict
 from typing import Optional, List, Dict, Any
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from lib.config import (
+    CHROMADB_PATH as CONFIG_CHROMADB_PATH,
+    PAPERS_COLLECTION as CONFIG_PAPERS_COLLECTION,
+    EMBEDDING_MODEL as CONFIG_EMBEDDING_MODEL,
+    NEO4J_URI as CONFIG_NEO4J_URI,
+    NEO4J_USER as CONFIG_NEO4J_USER,
+    NEO4J_PASSWORD as CONFIG_NEO4J_PASSWORD,
+    BRAVE_API_KEY as CONFIG_BRAVE_API_KEY,
+)
 
 # Configuration
-CHROMADB_PATH = "/home/user/work/polymax/chromadb/polymath_v2"
+CHROMADB_PATH = str(CONFIG_CHROMADB_PATH)
+PAPERS_COLLECTION = CONFIG_PAPERS_COLLECTION
+EMBEDDING_MODEL = CONFIG_EMBEDDING_MODEL
 PAPERS_DB = "/home/user/mcp_servers/polymax-synthesizer/papers.db"
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "polymathic2026"
-BRAVE_API_KEY = "BSAVT4LaGM0xylZUm1sQ5PzgvlqdJ5A"
+NEO4J_URI = CONFIG_NEO4J_URI
+NEO4J_USER = CONFIG_NEO4J_USER
+NEO4J_PASSWORD = CONFIG_NEO4J_PASSWORD or os.environ.get("NEO4J_PASSWORD", "")
+BRAVE_API_KEY = CONFIG_BRAVE_API_KEY or os.environ.get("BRAVE_API_KEY", "")
 ABSTRACTION_PATTERNS_PATH = "/home/user/work/polymax/data/rosetta/abstraction_patterns.json"
 _ABSTRACTION_PATTERNS = None
 
@@ -36,6 +52,7 @@ _neo4j_driver = None
 _chroma_client = None
 _chroma_collection = None
 _embedding_model = None
+_use_bge_m3 = False
 _embedding_cache = OrderedDict()
 _embedding_cache_size = int(os.environ.get("EMBED_CACHE_SIZE", "256"))
 
@@ -51,18 +68,37 @@ def get_neo4j_driver():
 
 def get_chroma_collection():
     """Lazy load ChromaDB collection and embedding model."""
-    global _chroma_client, _chroma_collection, _embedding_model
+    global _chroma_client, _chroma_collection, _embedding_model, _use_bge_m3
     if _chroma_collection is None:
         import chromadb
-        from sentence_transformers import SentenceTransformer
-        _embedding_model = SentenceTransformer('all-mpnet-base-v2')
+        if 'bge-m3' in EMBEDDING_MODEL.lower():
+            try:
+                from FlagEmbedding import BGEM3FlagModel
+                _embedding_model = BGEM3FlagModel(
+                    EMBEDDING_MODEL,
+                    use_fp16=True,
+                    device='cuda'
+                )
+                _use_bge_m3 = True
+            except ImportError:
+                from sentence_transformers import SentenceTransformer
+                _embedding_model = SentenceTransformer(EMBEDDING_MODEL, device='cuda')
+                _use_bge_m3 = False
+        else:
+            from sentence_transformers import SentenceTransformer
+            _embedding_model = SentenceTransformer(EMBEDDING_MODEL, device='cuda')
+            _use_bge_m3 = False
+
         _chroma_client = chromadb.PersistentClient(path=CHROMADB_PATH)
-        _chroma_collection = _chroma_client.get_collection("polymath_corpus")
+        _chroma_collection = _chroma_client.get_collection(PAPERS_COLLECTION)
     return _chroma_collection, _embedding_model
 
 
 def _encode_query(query: str):
     if _embedding_cache_size <= 0:
+        if _use_bge_m3:
+            result = _embedding_model.encode([query], return_dense=True)
+            return [result['dense_vecs'][0].tolist()]
         return _embedding_model.encode([query]).tolist()
 
     cached = _embedding_cache.get(query)
@@ -70,7 +106,11 @@ def _encode_query(query: str):
         _embedding_cache.move_to_end(query)
         return cached
 
-    embedding = _embedding_model.encode([query]).tolist()
+    if _use_bge_m3:
+        result = _embedding_model.encode([query], return_dense=True)
+        embedding = [result['dense_vecs'][0].tolist()]
+    else:
+        embedding = _embedding_model.encode([query]).tolist()
     _embedding_cache[query] = embedding
     if len(_embedding_cache) > _embedding_cache_size:
         _embedding_cache.popitem(last=False)

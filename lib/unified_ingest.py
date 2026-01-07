@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Unified Ingestion Pipeline for Polymath System
-Updates all stores atomically: ChromaDB (vectors) + Neo4j (graph) + Postgres (metadata)
+Postgres-first updates with best-effort ChromaDB + Neo4j indexing
 
 Features:
 - PDF text extraction with OCR fallback
@@ -15,7 +15,6 @@ import os
 import re
 import json
 import hashlib
-import sqlite3
 import uuid
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
@@ -26,11 +25,19 @@ import logging
 # Configuration - import from centralized config
 from lib.config import (
     CHROMADB_PATH, STAGING_DIR, POSTGRES_DSN as POSTGRES_URL,
-    NEO4J_URI, NEO4J_PASSWORD, get_chroma_path, PAPERS_COLLECTION
+    NEO4J_URI, NEO4J_PASSWORD, PAPERS_COLLECTION, CODE_COLLECTION,
+    EMBEDDING_MODEL
 )
 
 # Local LLM-based entity extraction (replaces regex-based extraction)
 from lib.local_extractor import LocalEntityExtractor
+from lib.enhanced_pdf_parser import EnhancedPDFParser, Passage
+from lib.doc_identity import compute_doc_id, upsert_document
+
+try:
+    from psycopg2.extras import execute_values
+except Exception:  # pragma: no cover - optional dependency at runtime
+    execute_values = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,6 +57,19 @@ class IngestResult:
     ingestion_method: Optional[str] = None
     source_item_id: Optional[int] = None
     errors: List[str] = field(default_factory=list)
+
+
+@dataclass
+class CodeChunk:
+    """Lightweight code chunk with provenance metadata."""
+    text: str
+    chunk_type: str
+    name: str
+    class_name: Optional[str]
+    start_line: int
+    end_line: int
+    chunk_id: Optional[str] = None
+    chunk_hash: Optional[str] = None
 
 
 @dataclass
@@ -80,7 +100,8 @@ class UnifiedIngestor:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
-        self._chroma = None
+        self._papers_coll = None
+        self._code_coll = None
         self._neo4j = None
         self._postgres = None
         self._embedder = None
@@ -88,15 +109,24 @@ class UnifiedIngestor:
 
         # LLM-based entity extractor (replaces regex)
         self.extractor = LocalEntityExtractor()
+        self._pdf_parser = EnhancedPDFParser()
+        self._use_bge_m3 = False
 
-    def _get_chroma(self):
-        """Lazy load ChromaDB with correct 1024-dim BGE-M3 collection."""
-        if self._chroma is None:
+    def _get_papers_collection(self):
+        """Lazy load ChromaDB papers collection (BGE-M3)."""
+        if self._papers_coll is None:
             import chromadb
-            client = chromadb.PersistentClient(path=CHROMADB_PATH)
-            # Use PAPERS_COLLECTION from config (polymath_bge_m3) - NOT legacy collection
-            self._chroma = client.get_or_create_collection(PAPERS_COLLECTION)
-        return self._chroma
+            client = chromadb.PersistentClient(path=str(CHROMADB_PATH))
+            self._papers_coll = client.get_or_create_collection(PAPERS_COLLECTION)
+        return self._papers_coll
+
+    def _get_code_collection(self):
+        """Lazy load ChromaDB code collection (BGE-M3)."""
+        if self._code_coll is None:
+            import chromadb
+            client = chromadb.PersistentClient(path=str(CHROMADB_PATH))
+            self._code_coll = client.get_or_create_collection(CODE_COLLECTION)
+        return self._code_coll
 
     def _get_neo4j(self):
         """Lazy load Neo4j driver."""
@@ -119,11 +149,39 @@ class UnifiedIngestor:
         return self._postgres
 
     def _get_embedder(self):
-        """Lazy load embedding model."""
+        """Lazy load embedding model with BGE-M3 support."""
         if self._embedder is None:
-            from sentence_transformers import SentenceTransformer
-            self._embedder = SentenceTransformer('all-mpnet-base-v2')
+            model_name = EMBEDDING_MODEL
+            if 'bge-m3' in model_name.lower():
+                try:
+                    from FlagEmbedding import BGEM3FlagModel
+                    self._embedder = BGEM3FlagModel(
+                        model_name,
+                        use_fp16=True,
+                        device='cuda'
+                    )
+                    self._use_bge_m3 = True
+                    logger.info(f"Loaded BGE-M3 model (FlagEmbedding): {model_name}")
+                except ImportError:
+                    from sentence_transformers import SentenceTransformer
+                    self._embedder = SentenceTransformer(model_name, device='cuda')
+                    self._use_bge_m3 = False
+                    logger.warning("FlagEmbedding not installed, using sentence-transformers fallback")
+            else:
+                from sentence_transformers import SentenceTransformer
+                self._embedder = SentenceTransformer(model_name, device='cuda')
+                self._use_bge_m3 = False
+                logger.info(f"Loaded embedding model: {model_name}")
         return self._embedder
+
+    def _encode_texts(self, texts: List[str]) -> List[List[float]]:
+        """Encode texts to embedding vectors."""
+        embedder = self._get_embedder()
+        if getattr(self, '_use_bge_m3', False):
+            result = embedder.encode(texts, return_dense=True)
+            return result['dense_vecs'].tolist()
+        embeddings = embedder.encode(texts)
+        return embeddings.tolist() if hasattr(embeddings, "tolist") else embeddings
 
     def _get_pg_capabilities(self) -> Dict[str, bool]:
         """Detect which Postgres tables/columns are available."""
@@ -134,7 +192,13 @@ class UnifiedIngestor:
             "available": False,
             "artifacts": False,
             "chunks": False,
+            "documents": False,
+            "doc_aliases": False,
+            "passages": False,
+            "code_files": False,
+            "code_chunks": False,
             "ingest_runs": False,
+            "artifact_doc_id": False,
             "artifact_ingest_run_id": False,
             "artifact_source_item_id": False,
             "artifact_ingestion_method": False,
@@ -169,9 +233,15 @@ class UnifiedIngestor:
 
             caps["artifacts"] = has_table("artifacts")
             caps["chunks"] = has_table("chunks")
+            caps["documents"] = has_table("documents")
+            caps["doc_aliases"] = has_table("doc_aliases")
+            caps["passages"] = has_table("passages")
+            caps["code_files"] = has_table("code_files")
+            caps["code_chunks"] = has_table("code_chunks")
             caps["ingest_runs"] = has_table("ingest_runs")
 
             if caps["artifacts"]:
+                caps["artifact_doc_id"] = has_column("artifacts", "doc_id")
                 caps["artifact_ingest_run_id"] = has_column("artifacts", "ingest_run_id")
                 caps["artifact_source_item_id"] = has_column("artifacts", "source_item_id")
                 caps["artifact_ingestion_method"] = has_column("artifacts", "ingestion_method")
@@ -294,11 +364,13 @@ class UnifiedIngestor:
         ingest_run_id: Optional[str],
         source_item_id: Optional[int],
         ingestion_method: Optional[str],
+        doc_id: Optional[str] = None,
+        insert_chunks: bool = True,
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """Insert artifact + chunks into Postgres if available."""
         pg = self._get_postgres()
         caps = self._get_pg_capabilities()
-        if not pg or not caps.get("artifacts") or not caps.get("chunks"):
+        if not pg or not caps.get("artifacts") or (insert_chunks and not caps.get("chunks")):
             return False, None, "Postgres unavailable or schema missing"
 
         cursor = None
@@ -308,6 +380,11 @@ class UnifiedIngestor:
             columns = ["artifact_type", "title", "file_path", "file_hash", "indexed_at"]
             placeholders = ["%s", "%s", "%s", "%s", "NOW()"]
             values = [artifact_type, title, file_path, file_hash]
+
+            if caps.get("artifact_doc_id") and doc_id:
+                columns.append("doc_id")
+                placeholders.append("%s")
+                values.append(doc_id)
 
             if caps.get("artifact_ingest_run_id") and ingest_run_id:
                 columns.append("ingest_run_id")
@@ -348,16 +425,17 @@ class UnifiedIngestor:
             cursor.execute(query, values)
             artifact_id = cursor.fetchone()[0]
 
-            for i, chunk in enumerate(chunks):
-                chunk_id = chunk_ids[i]
-                cursor.execute(
-                    """
-                    INSERT INTO chunks (id, artifact_id, chunk_index, content)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                    """,
-                    (chunk_id, artifact_id, i, chunk),
-                )
+            if insert_chunks:
+                for i, chunk in enumerate(chunks):
+                    chunk_id = chunk_ids[i]
+                    cursor.execute(
+                        """
+                        INSERT INTO chunks (id, artifact_id, chunk_index, content)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (id) DO NOTHING
+                        """,
+                        (chunk_id, artifact_id, i, chunk),
+                    )
 
             pg.commit()
             return True, artifact_id, None
@@ -367,6 +445,313 @@ class UnifiedIngestor:
         finally:
             if cursor is not None:
                 cursor.close()
+
+    def _split_authors(self, raw: str) -> List[str]:
+        """Split author string into a list without breaking 'Last, First'."""
+        if not raw:
+            return []
+        parts = re.split(r';|\s+and\s+', raw)
+        return [p.strip() for p in parts if p.strip()]
+
+    def _extract_year(self, metadata: Dict[str, Any], text: str) -> int:
+        """Extract a publication year from metadata or text."""
+        for key in ("creationDate", "modDate"):
+            value = metadata.get(key, "")
+            match = re.search(r'(19|20)\d{2}', value)
+            if match:
+                return int(match.group(0))
+        match = re.search(r'\b(19|20)\d{2}\b', text)
+        return int(match.group(0)) if match else 0
+
+    def _extract_identifiers(self, text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Extract DOI, PMID, and arXiv IDs from text."""
+        doi = None
+        pmid = None
+        arxiv_id = None
+
+        doi_match = re.search(r'\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b', text, flags=re.I)
+        if doi_match:
+            doi = doi_match.group(0).rstrip(').,;')
+
+        pmid_match = re.search(r'\bPMID[:\s]*([0-9]{4,10})\b', text, flags=re.I)
+        if pmid_match:
+            pmid = pmid_match.group(1)
+
+        arxiv_match = re.search(r'\barXiv[:\s]*([0-9]{4}\.[0-9]{4,5})(v\d+)?\b', text, flags=re.I)
+        if arxiv_match:
+            arxiv_id = arxiv_match.group(1)
+
+        return doi, pmid, arxiv_id
+
+    def _extract_pdf_metadata(self, pdf_path: str) -> Dict[str, Any]:
+        """Extract basic PDF metadata and identifiers."""
+        metadata = {
+            "title": Path(pdf_path).stem,
+            "author": "",
+            "authors": [],
+            "pages": 0,
+            "file_hash": self._file_hash(pdf_path),
+            "doi": None,
+            "pmid": None,
+            "arxiv_id": None,
+            "year": 0,
+        }
+
+        first_page_text = ""
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(pdf_path)
+            metadata["pages"] = len(doc)
+            meta = doc.metadata or {}
+            metadata["title"] = meta.get("title") or metadata["title"]
+            metadata["author"] = meta.get("author") or ""
+            if len(doc) > 0:
+                first_page_text = doc[0].get_text() or ""
+            doc.close()
+        except Exception as e:
+            logger.warning(f"PDF metadata read failed: {e}")
+
+        metadata["authors"] = self._split_authors(metadata.get("author", ""))
+        metadata["year"] = self._extract_year(meta if 'meta' in locals() else {}, first_page_text)
+        doi, pmid, arxiv_id = self._extract_identifiers(first_page_text)
+        metadata["doi"] = doi
+        metadata["pmid"] = pmid
+        metadata["arxiv_id"] = arxiv_id
+
+        return metadata
+
+    def _sync_postgres_passages(self, passages: List[Passage]) -> Tuple[bool, Optional[str]]:
+        """Insert citation-eligible passages into Postgres."""
+        pg = self._get_postgres()
+        caps = self._get_pg_capabilities()
+        if not pg or not caps.get("passages"):
+            return False, "Postgres passages table unavailable"
+
+        if not passages:
+            return False, "No passages to insert"
+
+        cursor = None
+        try:
+            cursor = pg.cursor()
+            rows = [
+                (
+                    str(p.passage_id),
+                    str(p.doc_id),
+                    p.page_num,
+                    p.page_char_start,
+                    p.page_char_end,
+                    p.section,
+                    p.passage_text,
+                    p.quality_score,
+                    p.parser_version,
+                )
+                for p in passages
+            ]
+
+            if execute_values is None:
+                for row in rows:
+                    cursor.execute(
+                        """
+                        INSERT INTO passages
+                        (passage_id, doc_id, page_num, page_char_start, page_char_end,
+                         section, passage_text, quality_score, parser_version)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (passage_id) DO NOTHING
+                        """,
+                        row,
+                    )
+            else:
+                execute_values(
+                    cursor,
+                    """
+                    INSERT INTO passages
+                    (passage_id, doc_id, page_num, page_char_start, page_char_end,
+                     section, passage_text, quality_score, parser_version)
+                    VALUES %s
+                    ON CONFLICT (passage_id) DO NOTHING
+                    """,
+                    rows,
+                )
+
+            pg.commit()
+            return True, None
+        except Exception as e:
+            pg.rollback()
+            return False, str(e)
+        finally:
+            if cursor is not None:
+                cursor.close()
+
+    def _sync_postgres_code_file(
+        self,
+        repo_name: str,
+        repo_url: Optional[str],
+        repo_root: str,
+        default_branch: str,
+        commit_sha: str,
+        rel_path: str,
+        language: str,
+        file_hash: str,
+        file_size: int,
+        loc: int,
+        modified_time: Optional[datetime],
+        chunks: List[CodeChunk],
+        concepts: List[str],
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Insert code file + chunks into Postgres."""
+        pg = self._get_postgres()
+        caps = self._get_pg_capabilities()
+        if not pg or not caps.get("code_files") or not caps.get("code_chunks"):
+            return False, None, "Postgres code tables unavailable"
+
+        cursor = None
+        try:
+            cursor = pg.cursor()
+            cursor.execute(
+                """
+                INSERT INTO code_files
+                (repo_name, repo_url, repo_root, default_branch, head_commit_sha,
+                 file_path, language, file_hash, file_size_bytes, loc, modified_time)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (repo_name, file_path, head_commit_sha) DO UPDATE
+                SET file_hash = EXCLUDED.file_hash,
+                    file_size_bytes = EXCLUDED.file_size_bytes,
+                    loc = EXCLUDED.loc,
+                    modified_time = EXCLUDED.modified_time
+                RETURNING file_id
+                """,
+                (
+                    repo_name,
+                    repo_url,
+                    repo_root,
+                    default_branch,
+                    commit_sha,
+                    rel_path,
+                    language,
+                    file_hash,
+                    file_size,
+                    loc,
+                    modified_time,
+                ),
+            )
+            file_id = cursor.fetchone()[0]
+
+            rows = []
+            for chunk in chunks:
+                rows.append(
+                    (
+                        chunk.chunk_id,
+                        file_id,
+                        chunk.chunk_type,
+                        chunk.name,
+                        chunk.class_name,
+                        f"{rel_path}:{chunk.name}",
+                        chunk.start_line,
+                        chunk.end_line,
+                        chunk.text,
+                        chunk.chunk_hash,
+                        None,
+                        None,
+                        [],
+                        concepts,
+                        f"c_{chunk.chunk_id}",
+                        chunk.text,
+                    )
+                )
+
+            if rows:
+                if execute_values is None:
+                    for row in rows:
+                        cursor.execute(
+                            """
+                            INSERT INTO code_chunks
+                            (chunk_id, file_id, chunk_type, name, class_name, symbol_qualified_name,
+                             start_line, end_line, content, chunk_hash, docstring, signature,
+                             imports, concepts, embedding_id, search_vector)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                    to_tsvector('english', %s))
+                            ON CONFLICT (chunk_id) DO NOTHING
+                            """,
+                            row,
+                        )
+                else:
+                    execute_values(
+                        cursor,
+                        """
+                        INSERT INTO code_chunks
+                        (chunk_id, file_id, chunk_type, name, class_name, symbol_qualified_name,
+                         start_line, end_line, content, chunk_hash, docstring, signature,
+                         imports, concepts, embedding_id, search_vector)
+                        VALUES %s
+                        ON CONFLICT (chunk_id) DO NOTHING
+                        """,
+                        rows,
+                        template=(
+                            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                            " to_tsvector('english', %s))"
+                        ),
+                    )
+
+            pg.commit()
+            return True, str(file_id), None
+        except Exception as e:
+            pg.rollback()
+            return False, None, str(e)
+        finally:
+            if cursor is not None:
+                cursor.close()
+
+    def _find_repo_root(self, path: Path) -> Optional[Path]:
+        """Find the nearest git repo root for a path."""
+        for parent in [path] + list(path.parents):
+            if (parent / ".git").exists():
+                return parent
+        return None
+
+    def _infer_repo_metadata(self, code_path: Path, repo_name: Optional[str]) -> Dict[str, Any]:
+        """Infer repository metadata from a code file path."""
+        repo_root = self._find_repo_root(code_path)
+        repo_url = None
+        branch = "main"
+        commit_sha = "unknown"
+        resolved_name = repo_name or (repo_root.name if repo_root else code_path.parent.name)
+
+        if repo_root:
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["git", "-C", str(repo_root), "remote", "get-url", "origin"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    repo_url = result.stdout.strip()
+                    match = re.search(r'github\.com[:/](.+?)(?:\.git)?$', repo_url)
+                    if match:
+                        resolved_name = match.group(1)
+
+                result = subprocess.run(
+                    ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    branch = result.stdout.strip()
+
+                result = subprocess.run(
+                    ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    commit_sha = result.stdout.strip()
+            except Exception as e:
+                logger.debug(f"Git metadata extraction failed: {e}")
+
+        return {
+            "repo_name": resolved_name,
+            "repo_root": str(repo_root or code_path.parent),
+            "repo_url": repo_url,
+            "default_branch": branch,
+            "commit_sha": commit_sha,
+        }
 
     def extract_text(self, pdf_path: str) -> Tuple[str, Dict[str, Any]]:
         """Extract text from PDF, with OCR fallback."""
@@ -536,9 +921,9 @@ class UnifiedIngestor:
         Ingest a single PDF into all Polymath stores.
 
         Updates:
-        - ChromaDB: Adds chunked vectors
-        - Neo4j: Creates Paper node and MENTIONS relationships
-        - Postgres: Stores artifact metadata (when available)
+        - Postgres: documents + passages (citation-eligible)
+        - ChromaDB: Passage vectors (BGE-M3)
+        - Neo4j: Paper node + concept links
         """
         pdf_path = str(pdf_path)
         errors = []
@@ -560,51 +945,33 @@ class UnifiedIngestor:
                     errors=errors,
                 )
 
-        # Extract text
+        metadata = self._extract_pdf_metadata(pdf_path)
+        title = metadata.get("title", Path(pdf_path).stem)
+        authors = metadata.get("authors", [])
+        year = metadata.get("year", 0)
+        doi = metadata.get("doi")
+        pmid = metadata.get("pmid")
+        arxiv_id = metadata.get("arxiv_id")
+        file_hash = metadata.get("file_hash", self._file_hash(pdf_path))
+
+        # Deterministic document identity
+        doc_id = compute_doc_id(
+            title=title,
+            authors=authors,
+            year=year,
+            doi=doi,
+            pmid=pmid,
+            arxiv_id=arxiv_id,
+        )
+
+        # Extract passages with page-local provenance
         try:
-            text, metadata = self.extract_text(pdf_path)
+            passages = self._pdf_parser.extract_with_provenance(pdf_path, doc_id)
         except Exception as e:
-            errors.append(f"Text extraction failed: {e}")
+            errors.append(f"Enhanced parsing failed: {e}")
             finalize("failed")
             return IngestResult(
                 artifact_id="",
-                title=Path(pdf_path).stem,
-                artifact_type="paper",
-                chunks_added=0,
-                concepts_linked=[],
-                neo4j_node_created=False,
-                postgres_synced=False,
-                ingest_run_id=ingest_run_id,
-                ingestion_method=ingestion_method,
-                source_item_id=source_item_id,
-                errors=errors,
-            )
-
-        if not text.strip():
-            errors.append("No text content extracted")
-            finalize("failed")
-            return IngestResult(
-                artifact_id=metadata.get("file_hash", ""),
-                title=metadata.get("title", Path(pdf_path).stem),
-                artifact_type="paper",
-                chunks_added=0,
-                concepts_linked=[],
-                neo4j_node_created=False,
-                postgres_synced=False,
-                ingest_run_id=ingest_run_id,
-                ingestion_method=ingestion_method,
-                source_item_id=source_item_id,
-                errors=errors,
-            )
-
-        # Chunk text with contextual retrieval (prepend document context to each chunk)
-        title = metadata.get("title", Path(pdf_path).stem)
-        chunks = self.chunk_with_context(text, title)
-        if not chunks:
-            errors.append("No valid chunks created")
-            finalize("failed")
-            return IngestResult(
-                artifact_id=metadata.get("file_hash", ""),
                 title=title,
                 artifact_type="paper",
                 chunks_added=0,
@@ -617,108 +984,210 @@ class UnifiedIngestor:
                 errors=errors,
             )
 
-        # Extract concepts
-        concepts = self.extract_concepts(text)
+        if not passages:
+            errors.append("No passages extracted")
+            finalize("failed")
+            return IngestResult(
+                artifact_id=file_hash,
+                title=title,
+                artifact_type="paper",
+                chunks_added=0,
+                concepts_linked=[],
+                neo4j_node_created=False,
+                postgres_synced=False,
+                ingest_run_id=ingest_run_id,
+                ingestion_method=ingestion_method,
+                source_item_id=source_item_id,
+                errors=errors,
+            )
 
-        # Generate IDs
-        file_hash = metadata.get("file_hash", self._file_hash(pdf_path))
-        title = metadata.get("title", Path(pdf_path).stem)
+        # Extract concepts from title + first passage for speed
+        concept_seed = f"{title}\n\n{passages[0].passage_text}"
+        concepts = self.extract_concepts(concept_seed)
 
-        chunk_ids = [f"{file_hash}_chunk_{i}" for i in range(len(chunks))]
+        # 1. Postgres (System of Record) - REQUIRED
+        pg = self._get_postgres()
+        caps = self._get_pg_capabilities()
+        if not pg or not (caps.get("documents") and caps.get("passages")):
+            errors.append("Postgres documents/passages tables unavailable - aborting ingest")
+            finalize("failed")
+            return IngestResult(
+                artifact_id=file_hash,
+                title=title,
+                artifact_type="paper",
+                chunks_added=0,
+                concepts_linked=concepts,
+                neo4j_node_created=False,
+                postgres_synced=False,
+                ingest_run_id=ingest_run_id,
+                ingestion_method=ingestion_method,
+                source_item_id=source_item_id,
+                errors=errors,
+            )
 
-        # 1. Add to ChromaDB
+        postgres_synced = False
         try:
-            coll = self._get_chroma()
-            embedder = self._get_embedder()
+            upsert_document(
+                doc_id=doc_id,
+                title=title,
+                authors=authors,
+                year=year,
+                doi=doi,
+                pmid=pmid,
+                arxiv_id=arxiv_id,
+                parser_version=passages[0].parser_version if passages else None,
+                db_conn=pg,
+            )
 
-            embeddings = embedder.encode(chunks).tolist()
+            if caps.get("doc_aliases") and file_hash:
+                cursor = pg.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO doc_aliases (doc_id, alias_type, alias_value)
+                    VALUES (%s, 'file_hash', %s)
+                    ON CONFLICT (alias_type, alias_value) DO NOTHING
+                    """,
+                    (str(doc_id), file_hash),
+                )
+                pg.commit()
+                cursor.close()
+        except Exception as e:
+            errors.append(f"Postgres document upsert failed: {e}")
+            finalize("failed")
+            return IngestResult(
+                artifact_id=file_hash,
+                title=title,
+                artifact_type="paper",
+                chunks_added=0,
+                concepts_linked=concepts,
+                neo4j_node_created=False,
+                postgres_synced=False,
+                ingest_run_id=ingest_run_id,
+                ingestion_method=ingestion_method,
+                source_item_id=source_item_id,
+                errors=errors,
+            )
+
+        passages_ok, passages_error = self._sync_postgres_passages(passages)
+        if not passages_ok:
+            errors.append(f"Postgres passages insert failed: {passages_error}")
+            finalize("failed")
+            return IngestResult(
+                artifact_id=file_hash,
+                title=title,
+                artifact_type="paper",
+                chunks_added=0,
+                concepts_linked=concepts,
+                neo4j_node_created=False,
+                postgres_synced=False,
+                ingest_run_id=ingest_run_id,
+                ingestion_method=ingestion_method,
+                source_item_id=source_item_id,
+                errors=errors,
+            )
+
+        postgres_synced = True
+
+        # Optional: update artifacts table for legacy compatibility (no legacy chunks)
+        pg_synced, _, pg_error = self._sync_postgres_artifact(
+            artifact_type="paper",
+            title=title,
+            file_path=pdf_path,
+            file_hash=file_hash,
+            chunks=[],
+            chunk_ids=[],
+            ingest_run_id=ingest_run_id,
+            source_item_id=source_item_id,
+            ingestion_method=ingestion_method,
+            doc_id=str(doc_id),
+            insert_chunks=False,
+        )
+        if not pg_synced and pg_error:
+            logger.warning(f"Postgres artifact sync failed: {pg_error}")
+
+        # 2. ChromaDB (vector index)
+        try:
+            coll = self._get_papers_collection()
+            texts = [p.passage_text for p in passages]
+            embeddings = self._encode_texts(texts)
+
             metadatas = []
-            for i in range(len(chunks)):
+            for p in passages:
                 meta = {
+                    "doc_id": str(doc_id),
                     "title": title,
-                    "source": pdf_path,
-                    "chunk_index": i,
-                    "file_hash": file_hash,
+                    "doi": doi or "",
+                    "pmid": pmid or "",
+                    "year": year or 0,
+                    "page_num": p.page_num,
+                    "section": p.section,
                     "concepts": ",".join(concepts),
-                    "type": "paper",
-                    "chunk_type": "paper",
-                    "ingested_at": datetime.now().isoformat(),
-                    "ingest_run_id": ingest_run_id,
-                    "ingestion_method": ingestion_method,
+                    "parser_version": p.parser_version or "",
+                    "source_model": "bge_m3_v1" if "bge-m3" in EMBEDDING_MODEL.lower() else EMBEDDING_MODEL,
                 }
                 if source_item_id is not None:
                     meta["source_item_id"] = source_item_id
                 metadatas.append(meta)
 
-            coll.add(
-                ids=chunk_ids,
-                embeddings=embeddings,
-                documents=chunks,
-                metadatas=metadatas
-            )
-            logger.info(f"Added {len(chunks)} chunks to ChromaDB")
+            ids = [f"p_{p.passage_id}" for p in passages]
+            coll.upsert(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
+            logger.info(f"Added {len(passages)} passages to ChromaDB")
         except Exception as e:
             errors.append(f"ChromaDB error: {e}")
 
-        # 2. Add to Neo4j
+        # 3. Neo4j (graph)
         neo4j_created = False
         try:
             driver = self._get_neo4j()
             with driver.session() as session:
-                # Create Paper node
-                session.run("""
-                    MERGE (p:Paper {file_hash: $hash})
+                session.run(
+                    """
+                    MERGE (p:Paper {doc_id: $doc_id})
                     SET p.title = $title,
+                        p.year = $year,
+                        p.doi = $doi,
                         p.path = $path,
-                        p.chunks = $chunk_count,
                         p.ingested_at = datetime(),
                         p.ingest_run_id = $run_id,
                         p.ingestion_method = $ingestion_method,
                         p.source_item_id = $source_item_id
-                """, hash=file_hash, title=title, path=pdf_path,
-                     chunk_count=len(chunks), run_id=ingest_run_id,
-                     ingestion_method=ingestion_method, source_item_id=source_item_id)
+                    """,
+                    doc_id=str(doc_id),
+                    title=title,
+                    year=year,
+                    doi=doi,
+                    path=pdf_path,
+                    run_id=ingest_run_id,
+                    ingestion_method=ingestion_method,
+                    source_item_id=source_item_id,
+                )
 
-                # Create MENTIONS relationships for concepts
                 for concept in concepts:
-                    session.run("""
-                        MATCH (p:Paper {file_hash: $hash})
+                    session.run(
+                        """
+                        MATCH (p:Paper {doc_id: $doc_id})
                         MERGE (c:CONCEPT {name: $concept})
-                        MERGE (p)-[:MENTIONS]->(c)
-                    """, hash=file_hash, concept=concept)
+                        MERGE (p)-[r:MENTIONS]->(c)
+                        ON CREATE SET r.source_model = 'ingest_v1', r.created_at = datetime()
+                        ON MATCH SET r.source_model = 'ingest_v1', r.updated_at = datetime()
+                        """,
+                        doc_id=str(doc_id),
+                        concept=concept,
+                    )
 
                 neo4j_created = True
                 logger.info(f"Created Neo4j node with {len(concepts)} concept links")
         except Exception as e:
             errors.append(f"Neo4j error: {e}")
 
-        # 3. Add to Postgres (if available)
-        postgres_synced = False
-        pg_synced, _, pg_error = self._sync_postgres_artifact(
-            artifact_type="paper",
-            title=title,
-            file_path=pdf_path,
-            file_hash=file_hash,
-            chunks=chunks,
-            chunk_ids=chunk_ids,
-            ingest_run_id=ingest_run_id,
-            source_item_id=source_item_id,
-            ingestion_method=ingestion_method,
-        )
-        if pg_synced:
-            postgres_synced = True
-            logger.info("Synced to Postgres")
-        elif pg_error:
-            errors.append(f"Postgres error: {pg_error}")
-
         status = "committed" if not errors else "failed"
-        finalize(status, chunks_added=len(chunks), concepts_count=len(concepts))
+        finalize(status, chunks_added=len(passages), concepts_count=len(concepts))
 
         return IngestResult(
-            artifact_id=file_hash,
+            artifact_id=str(doc_id),
             title=title,
             artifact_type="paper",
-            chunks_added=len(chunks),
+            chunks_added=len(passages),
             concepts_linked=concepts,
             neo4j_node_created=neo4j_created,
             postgres_synced=postgres_synced,
@@ -742,7 +1211,7 @@ class UnifiedIngestor:
         Extracts:
         - Functions/classes as chunks
         - Imports as concept links
-        - Docstrings for semantic search
+        - Code files/chunks with line-level provenance
         """
         code_path = str(code_path)
         errors = []
@@ -785,7 +1254,17 @@ class UnifiedIngestor:
             )
 
         file_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
-        title = repo_name + "/" + Path(code_path).name if repo_name else Path(code_path).name
+
+        repo_meta = self._infer_repo_metadata(Path(code_path), repo_name)
+        repo_name = repo_meta["repo_name"]
+        repo_root = Path(repo_meta["repo_root"])
+        rel_path = Path(code_path).name
+        try:
+            rel_path = str(Path(code_path).relative_to(repo_root))
+        except ValueError:
+            pass
+        language = Path(code_path).suffix.lstrip('.') or "unknown"
+        title = f"{repo_name}/{Path(code_path).name}"
 
         # Extract chunks (functions, classes, or fixed-size)
         chunks = self._chunk_code(content, Path(code_path).suffix)
@@ -806,93 +1285,153 @@ class UnifiedIngestor:
                 errors=errors,
             )
 
+        for chunk in chunks:
+            chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()[:16]
+            chunk_id = uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"code:{file_hash}:{chunk_hash}:{chunk.start_line}:{chunk.end_line}"
+            )
+            chunk.chunk_hash = chunk_hash
+            chunk.chunk_id = str(chunk_id)
+
         # Extract concepts from imports and content
         concepts = self._extract_code_concepts(content)
 
-        chunk_ids = [f"code_{file_hash}_{i}" for i in range(len(chunks))]
-
-        # 1. Add to ChromaDB
+        # 1. Postgres (System of Record) - REQUIRED
         try:
-            coll = self._get_chroma()
-            embedder = self._get_embedder()
-            embeddings = embedder.encode(chunks).tolist()
+            stat = Path(code_path).stat()
+            file_size = stat.st_size
+            modified_time = datetime.fromtimestamp(stat.st_mtime)
+        except Exception:
+            file_size = len(content.encode())
+            modified_time = None
+
+        loc = content.count('\n') + 1
+
+        pg_synced, _, pg_error = self._sync_postgres_code_file(
+            repo_name=repo_name,
+            repo_url=repo_meta.get("repo_url"),
+            repo_root=str(repo_root),
+            default_branch=repo_meta.get("default_branch", "main"),
+            commit_sha=repo_meta.get("commit_sha", "unknown"),
+            rel_path=rel_path,
+            language=language,
+            file_hash=file_hash,
+            file_size=file_size,
+            loc=loc,
+            modified_time=modified_time,
+            chunks=chunks,
+            concepts=concepts,
+        )
+        if not pg_synced:
+            errors.append(f"Postgres error: {pg_error}")
+            finalize("failed")
+            return IngestResult(
+                artifact_id=file_hash,
+                title=title,
+                artifact_type="code",
+                chunks_added=0,
+                concepts_linked=concepts,
+                neo4j_node_created=False,
+                postgres_synced=False,
+                ingest_run_id=ingest_run_id,
+                ingestion_method=ingestion_method,
+                source_item_id=source_item_id,
+                errors=errors,
+            )
+
+        postgres_synced = True
+
+        # Optional: update artifacts table for legacy compatibility (no legacy chunks)
+        legacy_ok, _, legacy_error = self._sync_postgres_artifact(
+            artifact_type="code",
+            title=title,
+            file_path=code_path,
+            file_hash=file_hash,
+            chunks=[],
+            chunk_ids=[],
+            ingest_run_id=ingest_run_id,
+            source_item_id=source_item_id,
+            ingestion_method=ingestion_method,
+            insert_chunks=False,
+        )
+        if not legacy_ok and legacy_error:
+            logger.warning(f"Postgres artifact sync failed: {legacy_error}")
+
+        # 2. ChromaDB (vector index)
+        try:
+            coll = self._get_code_collection()
+            texts = [c.text for c in chunks]
+            embeddings = self._encode_texts(texts)
+
+            org = repo_name.split('/')[0] if '/' in repo_name else repo_name
             metadatas = []
-            for i in range(len(chunks)):
+            for chunk in chunks:
                 meta = {
-                    "title": title,
-                    "source": code_path,
-                    "chunk_index": i,
-                    "file_hash": file_hash,
+                    "repo_name": repo_name,
+                    "org": org,
+                    "file_path": rel_path,
+                    "name": chunk.name,
+                    "chunk_type": chunk.chunk_type,
+                    "language": language,
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
                     "concepts": ",".join(concepts),
-                    "type": "code",
-                    "chunk_type": "code_file",
-                    "language": Path(code_path).suffix.lstrip('.'),
-                    "ingested_at": datetime.now().isoformat(),
-                    "ingest_run_id": ingest_run_id,
-                    "ingestion_method": ingestion_method,
+                    "source_model": "bge_m3_v1" if "bge-m3" in EMBEDDING_MODEL.lower() else EMBEDDING_MODEL,
                 }
                 if source_item_id is not None:
                     meta["source_item_id"] = source_item_id
                 metadatas.append(meta)
 
-            coll.add(
-                ids=chunk_ids,
-                embeddings=embeddings,
-                documents=chunks,
-                metadatas=metadatas
-            )
+            ids = [f"c_{chunk.chunk_id}" for chunk in chunks]
+            coll.upsert(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
+            logger.info(f"Added {len(chunks)} code chunks to ChromaDB")
         except Exception as e:
             errors.append(f"ChromaDB error: {e}")
 
-        # 2. Add to Neo4j
+        # 3. Neo4j (graph)
         neo4j_created = False
         try:
             driver = self._get_neo4j()
             with driver.session() as session:
-                session.run("""
+                session.run(
+                    """
                     MERGE (c:Code {file_hash: $hash})
                     SET c.title = $title,
                         c.path = $path,
+                        c.repo = $repo_name,
                         c.language = $lang,
                         c.chunks = $chunk_count,
                         c.ingested_at = datetime(),
                         c.ingest_run_id = $run_id,
                         c.ingestion_method = $ingestion_method,
                         c.source_item_id = $source_item_id
-                """, hash=file_hash, title=title, path=code_path,
-                     lang=Path(code_path).suffix.lstrip('.'), chunk_count=len(chunks),
-                     run_id=ingest_run_id, ingestion_method=ingestion_method,
-                     source_item_id=source_item_id)
+                    """,
+                    hash=file_hash,
+                    title=title,
+                    path=code_path,
+                    repo_name=repo_name,
+                    lang=language,
+                    chunk_count=len(chunks),
+                    run_id=ingest_run_id,
+                    ingestion_method=ingestion_method,
+                    source_item_id=source_item_id,
+                )
 
                 for concept in concepts:
-                    session.run("""
+                    session.run(
+                        """
                         MATCH (code:Code {file_hash: $hash})
                         MERGE (c:CONCEPT {name: $concept})
                         MERGE (code)-[:USES]->(c)
-                    """, hash=file_hash, concept=concept)
+                        """,
+                        hash=file_hash,
+                        concept=concept,
+                    )
 
                 neo4j_created = True
         except Exception as e:
             errors.append(f"Neo4j error: {e}")
-
-        # 3. Add to Postgres (if available)
-        postgres_synced = False
-        pg_synced, _, pg_error = self._sync_postgres_artifact(
-            artifact_type="code",
-            title=title,
-            file_path=code_path,
-            file_hash=file_hash,
-            chunks=chunks,
-            chunk_ids=chunk_ids,
-            ingest_run_id=ingest_run_id,
-            source_item_id=source_item_id,
-            ingestion_method=ingestion_method,
-        )
-        if pg_synced:
-            postgres_synced = True
-            logger.info("Synced to Postgres")
-        elif pg_error:
-            errors.append(f"Postgres error: {pg_error}")
 
         status = "committed" if not errors else "failed"
         finalize(status, chunks_added=len(chunks), concepts_count=len(concepts))
@@ -911,29 +1450,74 @@ class UnifiedIngestor:
             errors=errors
         )
 
-    def _chunk_code(self, content: str, extension: str) -> List[str]:
-        """Chunk code by functions/classes or fixed size."""
-        chunks = []
+    def _chunk_code(self, content: str, extension: str) -> List[CodeChunk]:
+        """Chunk code by functions/classes or fallback heuristics."""
+        chunks: List[CodeChunk] = []
 
         if extension in ['.py']:
-            # Python: split by function/class
             import ast
+
+            class ChunkVisitor(ast.NodeVisitor):
+                def __init__(self, lines: List[str]):
+                    self.lines = lines
+                    self.chunks: List[CodeChunk] = []
+                    self._class_stack: List[str] = []
+
+                def _add_chunk(self, node, chunk_type: str, name: str, class_name: Optional[str]):
+                    start = max(node.lineno - 1, 0)
+                    end = node.end_lineno if hasattr(node, 'end_lineno') else start + 50
+                    text = '\n'.join(self.lines[start:end])
+                    if len(text) > 50:
+                        self.chunks.append(CodeChunk(
+                            text=text,
+                            chunk_type=chunk_type,
+                            name=name,
+                            class_name=class_name,
+                            start_line=start + 1,
+                            end_line=end,
+                        ))
+
+                def visit_ClassDef(self, node):
+                    self._add_chunk(node, "class", node.name, None)
+                    self._class_stack.append(node.name)
+                    self.generic_visit(node)
+                    self._class_stack.pop()
+
+                def visit_FunctionDef(self, node):
+                    class_name = self._class_stack[-1] if self._class_stack else None
+                    chunk_type = "method" if class_name else "function"
+                    self._add_chunk(node, chunk_type, node.name, class_name)
+
+                def visit_AsyncFunctionDef(self, node):
+                    class_name = self._class_stack[-1] if self._class_stack else None
+                    chunk_type = "method" if class_name else "function"
+                    self._add_chunk(node, chunk_type, node.name, class_name)
+
             try:
                 tree = ast.parse(content)
                 lines = content.split('\n')
-                for node in ast.walk(tree):
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                        start = node.lineno - 1
-                        end = node.end_lineno if hasattr(node, 'end_lineno') else start + 50
-                        chunk = '\n'.join(lines[start:end])
-                        if len(chunk) > 50:
-                            chunks.append(chunk)
+                visitor = ChunkVisitor(lines)
+                visitor.visit(tree)
+                chunks = visitor.chunks
             except SyntaxError:
-                pass
+                chunks = []
 
-        # Fallback: fixed-size chunks
         if not chunks:
-            chunks = self.chunk_text(content)
+            # Fallback: approximate chunking
+            chunk_texts = self.chunk_text(content)
+            start_line = 1
+            for chunk_text in chunk_texts:
+                line_count = chunk_text.count('\n') + 1
+                end_line = start_line + line_count - 1
+                chunks.append(CodeChunk(
+                    text=chunk_text,
+                    chunk_type="module",
+                    name="module",
+                    class_name=None,
+                    start_line=start_line,
+                    end_line=end_line,
+                ))
+                start_line = end_line + 1
 
         return chunks[:50]  # Limit chunks per file
 
@@ -1089,31 +1673,29 @@ class UnifiedIngestor:
 
         chunk_ids = [f"repo_{repo_hash}_{i}" for i in range(len(chunks))]
 
-        # 1. Add to ChromaDB
+        # 1. Add to ChromaDB (code collection)
         try:
-            coll = self._get_chroma()
-            embedder = self._get_embedder()
+            coll = self._get_code_collection()
+            embeddings = self._encode_texts(chunks)
+            org = repo_name.split('/')[0] if '/' in repo_name else repo_name
 
-            embeddings = embedder.encode(chunks).tolist()
             metadatas = []
             for i in range(len(chunks)):
                 meta = {
-                    "title": repo_name,
-                    "source": repo_path,
-                    "chunk_index": i,
-                    "file_hash": repo_hash,
-                    "concepts": ",".join(concepts),
-                    "type": "repo",
+                    "repo_name": repo_name,
+                    "org": org,
+                    "file_path": repo_path,
+                    "name": f"{repo_name}_repo_summary",
                     "chunk_type": "repo_flattened",
-                    "ingested_at": datetime.now().isoformat(),
-                    "ingest_run_id": ingest_run_id,
-                    "ingestion_method": ingestion_method,
+                    "language": "mixed",
+                    "concepts": ",".join(concepts),
+                    "source_model": "bge_m3_v1" if "bge-m3" in EMBEDDING_MODEL.lower() else EMBEDDING_MODEL,
                 }
                 if source_item_id is not None:
                     meta["source_item_id"] = source_item_id
                 metadatas.append(meta)
 
-            coll.add(
+            coll.upsert(
                 ids=chunk_ids,
                 embeddings=embeddings,
                 documents=chunks,
@@ -1155,24 +1737,25 @@ class UnifiedIngestor:
         except Exception as e:
             errors.append(f"Neo4j error: {e}")
 
-        # 3. Add to Postgres (if available)
+        # 3. Add to Postgres (legacy artifact, no chunks)
         postgres_synced = False
         pg_synced, _, pg_error = self._sync_postgres_artifact(
             artifact_type="repo",
             title=repo_name,
             file_path=repo_path,
             file_hash=repo_hash,
-            chunks=chunks,
-            chunk_ids=chunk_ids,
+            chunks=[],
+            chunk_ids=[],
             ingest_run_id=ingest_run_id,
             source_item_id=source_item_id,
             ingestion_method=ingestion_method,
+            insert_chunks=False,
         )
         if pg_synced:
             postgres_synced = True
             logger.info(f"Synced {repo_name} to Postgres")
         elif pg_error:
-            errors.append(f"Postgres error: {pg_error}")
+            logger.warning(f"Postgres artifact sync failed: {pg_error}")
 
         status = "committed" if not errors else "failed"
         finalize(status, chunks_added=len(chunks), concepts_count=len(concepts))
@@ -1276,18 +1859,10 @@ class UnifiedIngestor:
 
 class TransactionalIngestor(UnifiedIngestor):
     """
-    Transactional ingestion with Postgres as System of Record.
+    Postgres-first ingestion with best-effort secondary indexing.
 
-    Pattern:
-    1. Parse document
-    2. Generate embeddings (in memory)
-    3. BEGIN transaction
-    4. Insert to Postgres (artifacts, passages)
-    5. Insert to ChromaDB
-    6. Insert to Neo4j
-    7. COMMIT (or ROLLBACK all on any failure)
-
-    This ensures consistency - no orphan ChromaDB embeddings without Postgres records.
+    Postgres is the system of record. Vector/graph indexes are updated
+    after Postgres writes and can be rebuilt if they fail.
     """
 
     def __init__(self, *args, **kwargs):
@@ -1303,61 +1878,14 @@ class TransactionalIngestor(UnifiedIngestor):
         ingestion_method: Optional[str] = None,
         source_item_id: Optional[int] = None,
     ) -> IngestResult:
-        """Ingest PDF with transactional safety.
-
-        Overrides parent to wrap all database operations in a transaction.
-        Postgres writes happen first (system of record), then ChromaDB and Neo4j.
-        On any failure, Postgres rolls back and staged ChromaDB/Neo4j writes are discarded.
-        """
-        # For now, delegate to parent implementation
-        # Full transactional safety would require refactoring the parent class
-        # This wrapper provides the interface for future enhancement
-        logger.info(f"Transactional ingest: {pdf_path}")
-
-        pg = self._get_postgres()
-        if pg:
-            try:
-                # Start transaction
-                pg.autocommit = False
-
-                # Call parent implementation
-                result = super().ingest_pdf(
-                    pdf_path=pdf_path,
-                    metadata=metadata,
-                    ingest_run_id=ingest_run_id,
-                    ingestion_method=ingestion_method,
-                    source_item_id=source_item_id,
-                )
-
-                # Commit if successful
-                if not result.errors:
-                    pg.commit()
-                    logger.info(f"Committed transaction for: {result.title}")
-                else:
-                    pg.rollback()
-                    logger.warning(f"Rolled back transaction due to errors: {result.errors}")
-
-                return result
-
-            except Exception as e:
-                # Rollback on any exception
-                if pg:
-                    pg.rollback()
-                logger.error(f"Transaction failed, rolled back: {e}")
-                raise
-
-            finally:
-                if pg:
-                    pg.autocommit = True
-        else:
-            # No Postgres - fall back to non-transactional
-            return super().ingest_pdf(
-                pdf_path=pdf_path,
-                metadata=metadata,
-                ingest_run_id=ingest_run_id,
-                ingestion_method=ingestion_method,
-                source_item_id=source_item_id,
-            )
+        """Ingest PDF with Postgres-first ordering."""
+        logger.info(f"Postgres-first ingest: {pdf_path}")
+        return super().ingest_pdf(
+            pdf_path=pdf_path,
+            ingest_run_id=ingest_run_id,
+            ingestion_method=ingestion_method,
+            source_item_id=source_item_id,
+        )
 
 
 # CLI interface

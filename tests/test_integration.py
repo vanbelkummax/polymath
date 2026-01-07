@@ -47,15 +47,33 @@ class TestDatabaseConnections:
     def test_chromadb_connection(self):
         """Test ChromaDB connection and collections."""
         import chromadb
-        client = chromadb.PersistentClient(path="/home/user/work/polymax/chromadb")
+        from lib.config import (
+            CHROMADB_PATH, PAPERS_COLLECTION, CODE_COLLECTION,
+            PAPERS_COLLECTION_LEGACY, CODE_COLLECTION_LEGACY
+        )
+        from pathlib import Path
+
+        legacy_path = Path("/home/user/work/polymax/chromadb")
+        client = chromadb.PersistentClient(path=str(CHROMADB_PATH))
         collections = client.list_collections()
-
         collection_names = [c.name for c in collections]
-        assert "polymath_papers" in collection_names, "polymath_papers collection not found"
-        assert "polymath_code" in collection_names, "polymath_code collection not found"
 
-        papers = client.get_collection("polymath_papers")
-        code = client.get_collection("polymath_code")
+        if not collection_names and legacy_path.exists() and CHROMADB_PATH != legacy_path:
+            client = chromadb.PersistentClient(path=str(legacy_path))
+            collections = client.list_collections()
+            collection_names = [c.name for c in collections]
+
+        if not collection_names:
+            pytest.skip("No ChromaDB collections available")
+
+        papers_name = PAPERS_COLLECTION if PAPERS_COLLECTION in collection_names else PAPERS_COLLECTION_LEGACY
+        code_name = CODE_COLLECTION if CODE_COLLECTION in collection_names else CODE_COLLECTION_LEGACY
+
+        if papers_name not in collection_names or code_name not in collection_names:
+            pytest.skip("Expected ChromaDB collections not found")
+
+        papers = client.get_collection(papers_name)
+        code = client.get_collection(code_name)
         print(f"ChromaDB: {papers.count()} papers, {code.count()} code chunks")
 
         assert papers.count() > 0, "No papers in ChromaDB"

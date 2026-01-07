@@ -7,12 +7,13 @@ Combines multiple retrieval methods for maximum recall across disciplines.
 """
 
 import sys
-sys.path.insert(0, '/home/user/work/polymax/mcp')
-sys.path.insert(0, '/home/user/work/polymax/lib')
+from pathlib import Path
 
-from hybrid_search import HybridSearcher
-from rosetta_query_expander import expand_query
-import chromadb
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from lib.hybrid_search_v2 import HybridSearcherV2
+from lib.rosetta_query_expander import expand_query
 from typing import List, Dict, Any
 
 # Create global searcher instance
@@ -21,7 +22,7 @@ _searcher = None
 def _get_searcher():
     global _searcher
     if _searcher is None:
-        _searcher = HybridSearcher()
+        _searcher = HybridSearcherV2()
     return _searcher
 
 
@@ -67,7 +68,7 @@ def polymathic_search(
 
     # Step 2: Execute hybrid search
     searcher = _get_searcher()
-    results_obj = searcher.hybrid_search(expanded_query, n_results=n_results * 2)
+    results_obj = searcher.hybrid_search(expanded_query, n=n_results * 2, rerank=False)
 
     # Convert SearchResult objects to dicts for compatibility
     results = []
@@ -87,12 +88,16 @@ def polymathic_search(
         for r in results[:10]:  # Top 10 results
             metadata = r.get('metadata', {})
             if 'concepts' in metadata:
-                concepts.update(metadata.get('concepts', []))
+                concepts_raw = metadata.get('concepts', [])
+                if isinstance(concepts_raw, str):
+                    concepts.update([c.strip() for c in concepts_raw.split(',') if c.strip()])
+                else:
+                    concepts.update(concepts_raw)
 
         # Search for each concept to find related content
         for concept in list(concepts)[:5]:  # Limit to top 5 concepts
             try:
-                concept_search_obj = searcher.hybrid_search(concept, n_results=5)
+                concept_search_obj = searcher.hybrid_search(concept, n=5, rerank=False)
                 # Convert SearchResult objects to dicts
                 for r in concept_search_obj[:3]:
                     concept_results.append({
@@ -122,7 +127,11 @@ def polymathic_search(
             # Cross-domain indicators
             is_bridge = False
             if 'concepts' in metadata:
-                concepts = metadata.get('concepts', [])
+                concepts_raw = metadata.get('concepts', [])
+                if isinstance(concepts_raw, str):
+                    concepts = [c.strip() for c in concepts_raw.split(',') if c.strip()]
+                else:
+                    concepts = concepts_raw
                 # Check if concepts span multiple domains
                 domains = set()
                 for c in concepts:

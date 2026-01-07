@@ -1,0 +1,9 @@
+{
+  "started_at": "2026-01-06T18:30:54.376529",
+  "papers_migrated": 532100,
+  "code_migrated": 410800,
+  "concepts_extracted": 2316,
+  "neo4j_merged": 0,
+  "completed": true,
+  "completed_at": "2026-01-06T21:51:55.433498"
+}

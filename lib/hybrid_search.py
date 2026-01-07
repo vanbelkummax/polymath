@@ -5,6 +5,7 @@ Implements Reciprocal Rank Fusion (RRF) for result merging.
 """
 
 import os
+import logging
 from collections import OrderedDict
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ CHROMA_PATH = os.environ.get("CHROMA_PATH", "/home/user/work/polymax/chromadb/po
 POSTGRES_URL = os.environ.get("POSTGRES_URL", "dbname=polymath user=polymath host=/var/run/postgresql")
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 EMBEDDING_MODEL = "all-mpnet-base-v2"  # 768-dim, matches ChromaDB collection
+
+logger = logging.getLogger(__name__)
 
 # Import monitoring decorator
 try:

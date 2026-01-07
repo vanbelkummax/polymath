@@ -255,6 +255,8 @@ pytest tests/ -v
 ## Documentation
 
 - [User Manual](docs/POLYMATH_USER_MANUAL.md) - Comprehensive guide
+- [Academic Playbook](docs/ACADEMIC_PLAYBOOK.md) - Academic use cases and optimization guide
+- [Hackathon Playbook](docs/HACKATHON_PLAYBOOK.md) - Spatial multimodal hackathon workflow
 - [Literature Sentry Design](docs/plans/2026-01-04-literature-sentry-design.md)
 - [Code Ingestion Design](docs/plans/2026-01-05-code-repo-ingestion-design.md)
 
