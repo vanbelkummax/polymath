@@ -19,6 +19,15 @@ try:
 except ImportError:
     ollama = None
 
+# Import text quality utilities for robust extraction
+try:
+    from lib.text_quality import text_quality, normalize_text_soft, normalize_for_match
+except ImportError:
+    # Fallback if running from different directory
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lib.text_quality import text_quality, normalize_text_soft, normalize_for_match
+
 logger = logging.getLogger(__name__)
 
 
@@ -322,6 +331,359 @@ JSON object with concepts:"""
             results.append(concepts)
 
         return results
+
+    def extract_concepts_with_evidence(self, text: str) -> List[Dict[str, Any]]:
+        """Extract concepts WITH evidence binding and quality gating.
+
+        Quality-gated extraction strategy:
+        1. Assess text quality (malformed PDF detection)
+        2. If low quality: Use canonical-only extraction with support="none"
+        3. If clean: Use evidence-mode extraction with substring validation
+
+        Returns concepts with embedded evidence dict:
+        - canonical: normalized concept name
+        - type, aliases, confidence
+        - evidence: {surface, context, support, quality, source_text}
+
+        Support types:
+        - "literal": surface+context are exact substrings of raw text (AUDIT-GRADE)
+        - "normalized": matches only after normalize_for_match()
+        - "inferred": high-confidence LLM extraction without text evidence
+        - "none": concept extracted but no verifiable evidence
+
+        CRITICAL: Only "literal" support is citable in grants/papers.
+        """
+        # Truncate long text
+        max_chars = 8000
+        original_text = text
+        if len(text) > max_chars:
+            text = text[:6000] + "\n...\n" + text[-2000:]
+
+        # Step 1: Assess text quality
+        quality = text_quality(text)
+        logger.debug(f"Text quality: {quality['label']} (score={quality['score']})")
+
+        # Step 2: Quality gating - decide extraction strategy
+        if quality['score'] < 0.5 or quality['label'] in ('no_space', 'glued'):
+            # Low quality - use canonical-only extraction on soft-normalized text
+            logger.info(f"Low quality text (score={quality['score']}), using canonical-only extraction")
+            return self._extract_canonical_only(text, quality)
+        else:
+            # Clean text - use evidence-mode extraction on RAW text
+            logger.debug("Clean text, using evidence-mode extraction")
+            return self._extract_with_evidence_validation(text, quality)
+
+    def _extract_canonical_only(
+        self,
+        text: str,
+        quality: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Fallback extraction for malformed text.
+
+        Uses normalize_text_soft() for discovery but marks all concepts as support="none"
+        since we cannot verify exact substrings in malformed text.
+
+        Args:
+            text: Raw passage text (malformed)
+            quality: Quality metrics from text_quality()
+
+        Returns:
+            List of concepts with evidence.support="none"
+        """
+        # Soft normalize for better LLM comprehension
+        normalized = normalize_text_soft(text)
+
+        prompt = f"""Extract scientific concepts from this text. Return ONLY canonical names.
+
+Text:
+{normalized}
+
+Output JSON (no markdown):
+{{"concepts":[{{"canonical":"optimal_transport","type":"method","aliases":["OT","Wasserstein"],"confidence":0.85}}]}}
+
+JSON:"""
+
+        # Try fast model
+        try:
+            response = ollama.chat(
+                model=self.fast_model,
+                messages=[{'role': 'user', 'content': prompt}],
+                options={'temperature': 0.1, 'num_predict': 2048}
+            )
+            response_text = response.message.content if hasattr(response, 'message') else ''
+            concepts = self._parse_canonical_response(response_text, quality, source_text="soft_normalized")
+            if concepts:
+                return concepts
+        except Exception as e:
+            logger.warning(f"Canonical extraction failed (fast): {e}")
+
+        # Fallback to heavy
+        if self.heavy_model:
+            try:
+                response = ollama.chat(
+                    model=self.heavy_model,
+                    messages=[{'role': 'user', 'content': prompt}],
+                    options={'temperature': 0.1, 'num_predict': 2048}
+                )
+                response_text = response.message.content if hasattr(response, 'message') else ''
+                concepts = self._parse_canonical_response(response_text, quality, source_text="soft_normalized")
+                if concepts:
+                    return concepts
+            except Exception as e:
+                logger.warning(f"Canonical extraction failed (heavy): {e}")
+
+        return []
+
+    def _extract_with_evidence_validation(
+        self,
+        text: str,
+        quality: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Evidence-mode extraction for clean text with strict substring validation.
+
+        Requires LLM to return exact surface+context substrings from RAW text.
+        Validates each concept and categorizes support type.
+
+        Args:
+            text: Raw passage text (clean)
+            quality: Quality metrics from text_quality()
+
+        Returns:
+            List of concepts with validated evidence
+        """
+        prompt = f"""Extract scientific concepts from this text WITH literal evidence.
+
+CRITICAL RULES:
+1. Copy surface form EXACTLY as it appears in the text (preserve case/spacing/punctuation)
+2. Copy context EXACTLY as a substring (10-30 words) containing the surface form
+3. Both surface and context must be EXACT substrings - do not paraphrase
+4. Normalize to canonical snake_case name
+5. If surface differs from canonical, list it in aliases
+
+Output JSON (no markdown, no explanations):
+{{"concepts":[{{"canonical":"optimal_transport","surface":"Wasserstein distance","context":"computed Wasserstein distance between distributions","type":"method","aliases":["OT"],"confidence":0.85}}]}}
+
+Text:
+{text}
+
+JSON:"""
+
+        # Try fast model
+        try:
+            response = ollama.chat(
+                model=self.fast_model,
+                messages=[{'role': 'user', 'content': prompt}],
+                options={'temperature': 0.1, 'num_predict': 2048}
+            )
+            response_text = response.message.content if hasattr(response, 'message') else ''
+            concepts = self._parse_evidence_response(response_text, text, quality)
+            if concepts:
+                return concepts
+        except Exception as e:
+            logger.warning(f"Evidence extraction failed (fast): {e}")
+
+        # Fallback to heavy
+        if self.heavy_model:
+            try:
+                response = ollama.chat(
+                    model=self.heavy_model,
+                    messages=[{'role': 'user', 'content': prompt}],
+                    options={'temperature': 0.1, 'num_predict': 2048}
+                )
+                response_text = response.message.content if hasattr(response, 'message') else ''
+                concepts = self._parse_evidence_response(response_text, text, quality)
+                if concepts:
+                    return concepts
+            except Exception as e:
+                logger.warning(f"Evidence extraction failed (heavy): {e}")
+
+        logger.warning("All evidence extraction attempts failed")
+        return []
+
+    def _parse_canonical_response(
+        self,
+        response_text: str,
+        quality: Dict[str, Any],
+        source_text: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Parse canonical-only response (no evidence binding).
+
+        All concepts get support="none" since we cannot verify substrings
+        in malformed text.
+
+        Args:
+            response_text: LLM response
+            quality: Quality metrics from text_quality()
+            source_text: "raw" or "soft_normalized"
+
+        Returns:
+            List of concepts with evidence.support="none"
+        """
+        # Try to find JSON in response
+        json_match = re.search(r'\{.*"concepts".*\}', response_text, re.DOTALL)
+        if not json_match:
+            return []
+
+        try:
+            data = json.loads(json_match.group(0))
+            concepts = data.get('concepts', [])
+
+            valid_concepts = []
+            for c in concepts:
+                if not isinstance(c, dict):
+                    continue
+
+                canonical = c.get('canonical', '').lower().replace(' ', '_')
+                if not canonical:
+                    continue
+
+                concept_type = c.get('type', 'domain')
+                if concept_type not in self.VALID_TYPES:
+                    concept_type = 'domain'
+
+                # Build concept with evidence.support="none"
+                valid_concepts.append({
+                    'canonical': canonical,
+                    'type': concept_type,
+                    'aliases': c.get('aliases', []),
+                    'confidence': float(c.get('confidence', 0.7)),
+                    'evidence': {
+                        'surface': None,
+                        'context': None,
+                        'support': 'none',
+                        'quality': quality,
+                        'source_text': source_text
+                    }
+                })
+
+            return valid_concepts
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Canonical parse failed: {e}")
+            return []
+
+    def _parse_evidence_response(
+        self,
+        response_text: str,
+        raw_text: str,
+        quality: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Parse evidence-bound response with strict substring validation.
+
+        Categorizes support type:
+        - "literal": surface+context are exact substrings of raw_text
+        - "normalized": matches only after normalize_for_match()
+        - "inferred": high-confidence LLM extraction without text match
+        - Drop concept if confidence < 0.9 and no text match
+
+        Args:
+            response_text: LLM response
+            raw_text: Original raw passage text
+            quality: Quality metrics from text_quality()
+
+        Returns:
+            List of concepts with validated evidence
+        """
+        # Try to find JSON in response
+        json_match = re.search(r'\{.*"concepts".*\}', response_text, re.DOTALL)
+        if not json_match:
+            return []
+
+        try:
+            data = json.loads(json_match.group(0))
+            concepts = data.get('concepts', [])
+
+            valid_concepts = []
+            for c in concepts:
+                if not isinstance(c, dict):
+                    continue
+
+                canonical = c.get('canonical', '').lower().replace(' ', '_')
+                surface = c.get('surface', '')
+                context = c.get('context', '')  # Changed from 'snippet' to match new contract
+
+                if not canonical:
+                    continue
+
+                concept_type = c.get('type', 'domain')
+                if concept_type not in self.VALID_TYPES:
+                    concept_type = 'domain'
+
+                confidence = float(c.get('confidence', 0.7))
+
+                # Validate evidence and categorize support type
+                support_type = self._validate_evidence(surface, context, raw_text, confidence)
+
+                # Drop concepts without evidence unless high confidence
+                if support_type is None:
+                    logger.debug(f"Dropping concept '{canonical}' - no evidence and confidence < 0.9")
+                    continue
+
+                # Build concept with validated evidence
+                valid_concepts.append({
+                    'canonical': canonical,
+                    'type': concept_type,
+                    'aliases': c.get('aliases', []),
+                    'confidence': confidence,
+                    'evidence': {
+                        'surface': surface if surface else None,
+                        'context': context if context else None,
+                        'support': support_type,
+                        'quality': quality,
+                        'source_text': 'raw'
+                    }
+                })
+
+            return valid_concepts
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Evidence parse failed: {e}")
+            return []
+
+    def _validate_evidence(
+        self,
+        surface: str,
+        context: str,
+        raw_text: str,
+        confidence: float
+    ) -> Optional[str]:
+        """
+        Validate evidence and categorize support type.
+
+        Returns:
+            "literal" | "normalized" | "inferred" | None
+
+        Rules:
+        - "literal": surface in raw_text AND context in raw_text AND surface in context
+        - "normalized": matches after normalize_for_match() but not literal
+        - "inferred": confidence >= 0.9 but no text match
+        - None: drop this concept (low confidence + no match)
+        """
+        # Check literal match (exact substring)
+        if surface and context:
+            if (surface in raw_text and
+                context in raw_text and
+                surface in context):
+                return "literal"
+
+            # Check normalized match (fuzzy)
+            norm_surface = normalize_for_match(surface)
+            norm_context = normalize_for_match(context)
+            norm_raw = normalize_for_match(raw_text)
+
+            if (norm_surface in norm_raw and
+                norm_context in norm_raw and
+                norm_surface in norm_context):
+                return "normalized"
+
+        # No text match - only keep if high confidence
+        if confidence >= 0.9:
+            return "inferred"
+
+        # Drop concept - no evidence and low confidence
+        return None
 
 
 # Convenience function for one-off extraction

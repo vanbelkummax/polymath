@@ -177,19 +177,36 @@ def upsert_passage_concept(
     aliases: List[str],
     confidence: float,
     extractor_model: str,
-    extractor_version: str
+    extractor_version: str,
+    evidence: Optional[Dict[str, Any]] = None
 ) -> None:
-    """Insert or update a passage concept.
+    """Insert or update a passage concept with optional evidence.
 
     Args:
         conn: Database connection
         passage_id: Passage UUID
-        concept_name: Normalized concept name (snake_case)
+        concept_name: Normalized concept name (canonical, snake_case)
         concept_type: Concept type (method, domain, etc.)
         aliases: List of alternative names
         confidence: Extraction confidence 0.0-1.0
         extractor_model: Model name used
         extractor_version: Extractor version tag
+        evidence: Optional evidence dict with standardized contract:
+            {
+                "surface": str|null,        # Exact substring from passage (or null)
+                "context": str|null,        # Context containing surface (or null)
+                "support": str,             # "literal"|"normalized"|"inferred"|"none"
+                "quality": dict,            # Text quality metrics from text_quality()
+                "source_text": str          # "raw"|"soft_normalized"
+            }
+
+            Support types:
+            - "literal": surface+context are exact substrings of raw passage text
+            - "normalized": matches only after normalize_for_match() transform
+            - "inferred": LLM high-confidence extraction without text evidence
+            - "none": concept extracted but no verifiable text evidence
+
+            CRITICAL: Only "literal" support is audit-grade citable.
     """
     import json
 
@@ -198,18 +215,20 @@ def upsert_passage_concept(
         cursor.execute("""
         INSERT INTO passage_concepts (
             passage_id, concept_name, concept_type, aliases, confidence,
-            extractor_model, extractor_version
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            extractor_model, extractor_version, evidence
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (passage_id, concept_name, extractor_version)
         DO UPDATE SET
             concept_type = EXCLUDED.concept_type,
             aliases = EXCLUDED.aliases,
             confidence = EXCLUDED.confidence,
             extractor_model = EXCLUDED.extractor_model,
+            evidence = EXCLUDED.evidence,
             created_at = NOW()
         """, (
             passage_id, concept_name, concept_type, json.dumps(aliases),
-            confidence, extractor_model, extractor_version
+            confidence, extractor_model, extractor_version,
+            json.dumps(evidence) if evidence else None
         ))
         conn.commit()
     except Exception as e:

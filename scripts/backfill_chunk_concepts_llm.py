@@ -227,18 +227,27 @@ def backfill_passages(
             # Process batch
             for pid, text in batch:
                 try:
-                    concepts = extractor.extract_concepts(text)
+                    # Quality-gated evidence extraction with support typing
+                    # Returns concepts with embedded evidence dict:
+                    # {canonical, type, aliases, confidence, evidence: {...}}
+                    concepts = extractor.extract_concepts_with_evidence(text)
 
                     if not dry_run:
                         for concept in concepts:
+                            # Evidence dict now includes standardized contract:
+                            # {surface, context, support, quality, source_text}
+                            # Support types: "literal"|"normalized"|"inferred"|"none"
+                            evidence = concept.get("evidence")
+
                             upsert_passage_concept(
                                 conn, pid,
-                                concept["name"],
+                                concept["canonical"],
                                 concept["type"],
                                 concept["aliases"],
                                 concept["confidence"],
                                 extractor.fast_model,
-                                extractor_version
+                                extractor_version,
+                                evidence=evidence  # Pass standardized evidence dict
                             )
 
                     processed += 1
@@ -262,18 +271,27 @@ def backfill_passages(
     # Process remaining
     for pid, text in batch:
         try:
-            concepts = extractor.extract_concepts(text)
+            # Evidence-bound extraction for passages (audit-grade citations)
+            concepts = extractor.extract_concepts_with_evidence(text)
 
             if not dry_run:
                 for concept in concepts:
+                    # Build evidence dict from surface form + snippet
+                    evidence = {
+                        "surface": concept.get("surface"),
+                        "snippet": concept.get("snippet"),
+                        "support": concept.get("support", "literal")
+                    }
+
                     upsert_passage_concept(
                         conn, pid,
-                        concept["name"],
+                        concept["canonical"],  # Use canonical as concept_name
                         concept["type"],
                         concept["aliases"],
                         concept["confidence"],
                         extractor.fast_model,
-                        extractor_version
+                        extractor_version,
+                        evidence=evidence  # Add evidence binding
                     )
 
             processed += 1

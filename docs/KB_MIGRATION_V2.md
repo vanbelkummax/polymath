@@ -393,6 +393,172 @@ CREATE TABLE kb_migrations (
 (:Passage)-[:MENTIONS {confidence, extractor_version, edge_version, weight}]->(:Concept)
 ```
 
+## Evidence Extraction & Citation Guidelines
+
+### Quality-Gated Evidence System
+
+**Status**: Production (2026-01-07)
+
+The system now uses **quality gating** to preserve audit-grade citations while enabling discovery on malformed PDF text.
+
+#### Text Quality Assessment
+
+Every passage is assessed for quality before extraction:
+
+```python
+from lib.text_quality import text_quality
+
+q = text_quality(passage_text)
+# Returns: {
+#   'score': 0.85,           # 0-1 scale
+#   'label': 'clean',        # clean|glued|no_space|marginal|short
+#   'whitespace_ratio': 0.20,
+#   'max_run_no_space': 30,
+#   'camel_rate': 0.02,
+#   'avg_word_len': 5.2
+# }
+```
+
+**Quality Labels:**
+- `clean` (score ≥ 0.7): Normal text with proper spacing
+- `glued` (score < 0.7): Missing spaces, high camelCase rate
+- `no_space` (score < 0.5): Severely malformed, very low whitespace
+- `marginal` (0.5 ≤ score < 0.7): Borderline quality
+- `short` (< 20 chars): Too short to assess
+
+#### Support Types
+
+Each concept gets an evidence support type:
+
+| Support | Meaning | Citable? | Use Case |
+|---------|---------|----------|----------|
+| **literal** | Exact substring match in raw text | ✅ **YES** | Grants, papers, audit-grade citations |
+| **normalized** | Match after fuzzy normalization | ⚠️ Discovery only | Cross-domain concept discovery |
+| **inferred** | High-confidence LLM extraction (≥0.9) | ❌ No | Discovery when text unavailable |
+| **none** | Extracted from malformed text | ❌ No | Discovery from poor-quality PDFs |
+
+**CRITICAL**: Only `literal` support is audit-grade citable for grants/publications.
+
+#### Evidence JSONB Schema
+
+```jsonb
+{
+  "surface": "Wasserstein distance",    // Exact substring (or null)
+  "context": "computed Wasserstein distance between distributions",  // Context (or null)
+  "support": "literal",                 // literal|normalized|inferred|none
+  "quality": {
+    "score": 0.85,
+    "label": "clean",
+    "whitespace_ratio": 0.20,
+    ...
+  },
+  "source_text": "raw"                  // raw|soft_normalized
+}
+```
+
+### Querying Concepts by Support Type
+
+#### Grant-Grade Citations Only
+
+```sql
+-- Only concepts safe for grant/paper citations
+SELECT
+  pc.concept_name,
+  pc.confidence,
+  pc.evidence->>'surface' AS surface_text,
+  pc.evidence->>'context' AS context_text,
+  pc.evidence->'quality'->>'score' AS quality_score
+FROM passage_concepts pc
+WHERE
+  pc.evidence->>'support' = 'literal'
+  AND pc.confidence >= 0.8
+  AND (pc.evidence->'quality'->>'score')::float >= 0.5
+ORDER BY pc.confidence DESC;
+```
+
+#### All Discovery Concepts (Including Malformed Text)
+
+```sql
+-- All extracted concepts, including from poor-quality PDFs
+SELECT
+  pc.concept_name,
+  pc.evidence->>'support' AS support_type,
+  pc.confidence,
+  pc.evidence->'quality'->>'label' AS text_quality
+FROM passage_concepts pc
+ORDER BY pc.confidence DESC;
+```
+
+#### Breakdown by Support Type
+
+```sql
+-- Distribution of evidence quality
+SELECT
+  pc.evidence->>'support' AS support_type,
+  COUNT(*) AS count,
+  AVG(pc.confidence) AS avg_confidence,
+  AVG((pc.evidence->'quality'->>'score')::float) AS avg_text_quality
+FROM passage_concepts pc
+GROUP BY support_type
+ORDER BY count DESC;
+```
+
+### Monitoring Quality
+
+Use the Passage Sentinel v3 to monitor extraction quality:
+
+```bash
+# Sample 200 passages and report quality metrics
+python3 scripts/passage_sentinel_v3.py --samples 200
+
+# Quick test with 50 passages
+python3 scripts/passage_sentinel_v3.py --samples 50 --dry-run
+```
+
+**Sentinel Reports:**
+- Text quality distribution (clean/glued/no_space percentages)
+- Extraction coverage (% passages with ≥1 concept)
+- Concept counts by support type
+- Grant-grade citation rate (literal + high conf + clean text)
+- Top concepts by support type
+
+### Text Normalization (Discovery Only)
+
+**NEVER use normalized text for citations** - only for concept extraction:
+
+```python
+from lib.text_quality import normalize_text_soft, normalize_for_match
+
+# Soft normalization (fixes obvious glue issues)
+normalized = normalize_text_soft("Hello.World,testCamelCase")
+# Returns: "Hello. World, test Camel Case"
+
+# Aggressive normalization (fuzzy matching only)
+fuzzy = normalize_for_match("Hello, World! Test")
+# Returns: "helloworldtest"
+```
+
+### Migration to Quality-Gated System
+
+Existing passage concepts can be re-extracted with quality gating:
+
+```bash
+# Backfill with quality-gated extraction
+python scripts/backfill_chunk_concepts_llm.py \
+  --extractor-version llm_v3_quality_gated \
+  --passages-only \
+  --limit 10000
+
+# Monitor progress with sentinel
+python scripts/passage_sentinel_v3.py --samples 200
+```
+
+**Acceptance Criteria:**
+- 40-60% literal support (clean text)
+- 20-30% normalized support (fuzzy matches)
+- 10-20% none support (malformed text discovery)
+- Grant-grade rate ≥ 30% (literal + conf≥0.8 + quality≥0.5)
+
 ## Support
 
 For issues:
@@ -400,3 +566,4 @@ For issues:
 2. Run validation: `python scripts/validate_kb_v2.py`
 3. Check checkpoints: `SELECT * FROM kb_migrations ORDER BY updated_at DESC;`
 4. Verify dependencies: `pip list | grep -E 'ollama|FlagEmbedding|neo4j|chromadb'`
+5. Monitor evidence quality: `python scripts/passage_sentinel_v3.py`
