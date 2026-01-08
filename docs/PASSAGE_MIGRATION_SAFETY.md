@@ -115,20 +115,83 @@ WHERE extractor_version = 'llm_v3_quality_gated';
 
 ## Quality Acceptance Criteria
 
-**Expected distribution** (based on ~46% literal support from sentinel v2):
+⚠️ **CRITICAL UNDERSTANDING**: Quality gating MEANS low overall literal support is expected and correct.
 
-| Metric | Target | Acceptable Range |
-|--------|--------|------------------|
-| Literal support | 40-50% | 30-60% |
-| Normalized support | 20-30% | 15-35% |
-| None support (malformed PDFs) | 10-20% | 5-30% |
-| Inferred support (high conf) | 5-10% | 0-15% |
-| Grant-grade rate (literal + conf≥0.8 + quality≥0.5) | ≥30% | ≥25% |
+**Why**: If 40% of passages are `no_space` + 25% are `glued`, those route to `support="none"` by design. This protects audit integrity.
 
-**If literal support < 25%:**
-- Run `python3 scripts/passage_sentinel_v3.py --samples 200` to diagnose
-- Check model availability: `ollama list`
-- Verify quality gating is active in logs: Look for "Low quality text (score=X), using canonical-only extraction"
+### What Actually Matters
+
+1. **Corpus quality distribution** (passage-level):
+   - How many passages are clean vs malformed?
+   - Expected: 30-50% clean, 20-40% glued, 10-30% no_space
+
+2. **Within clean passages, grant-grade yield**:
+   - What % of clean passages produce ≥1 grant-grade concept?
+   - Target: ≥40% of clean passages yield grant-grade concepts
+
+3. **Total grant-grade concept count**:
+   - Absolute number of citable concepts across all 532K passages
+   - Even 5% of passages with 2 concepts each = 53K citable concepts
+
+### Expected Metrics (REVISED)
+
+| Metric | Target | Notes |
+|--------|--------|-------|
+| **Overall literal support** | 10-30% | LOW IS EXPECTED (quality gating working) |
+| **Clean passage %** | 30-50% | From quality distribution |
+| **Grant-grade yield (clean only)** | ≥40% | % of clean passages with ≥1 citable concept |
+| **Total grant-grade concepts** | ≥20K | Absolute count matters more than % |
+
+### Diagnostic Queries (Use These)
+
+**A) Passage quality distribution:**
+```sql
+SELECT
+  evidence->'quality'->>'label' AS quality,
+  COUNT(DISTINCT passage_id) AS passages,
+  ROUND(AVG((evidence->'quality'->>'score')::float)::numeric, 3) AS avg_score
+FROM passage_concepts
+WHERE extractor_version = 'llm_v3_quality_gated'
+GROUP BY quality
+ORDER BY passages DESC;
+```
+
+**B) Grant-grade yield by quality:**
+```sql
+WITH per_passage AS (
+  SELECT
+    passage_id,
+    evidence->'quality'->>'label' AS quality,
+    BOOL_OR(evidence->>'support'='literal' AND confidence>=0.8 AND (evidence->'quality'->>'score')::float>=0.5) AS has_grant_grade
+  FROM passage_concepts
+  WHERE extractor_version='llm_v3_quality_gated'
+  GROUP BY passage_id, quality
+)
+SELECT
+  quality,
+  COUNT(*) AS passages,
+  SUM(has_grant_grade::int) AS with_grant_grade,
+  ROUND((SUM(has_grant_grade::int)::float / COUNT(*))::numeric, 3) AS yield_rate
+FROM per_passage
+GROUP BY quality
+ORDER BY passages DESC;
+```
+
+**C) Total grant-grade concepts:**
+```sql
+SELECT COUNT(*) AS grant_grade_concepts
+FROM passage_concepts
+WHERE extractor_version='llm_v3_quality_gated'
+  AND evidence->>'support'='literal'
+  AND confidence >= 0.8
+  AND (evidence->'quality'->>'score')::float >= 0.5;
+```
+
+### Red Flags (When to Stop)
+
+- Clean passage % < 20% (suggests PDF extraction is completely broken)
+- Grant-grade yield (clean only) < 20% (suggests LLM or validation broken)
+- Total grant-grade concepts < 10K after full run (insufficient for grants)
 
 ---
 
