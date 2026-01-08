@@ -219,6 +219,11 @@ def backfill_passages(
     failed = 0
     batch = []
 
+    # Track quality and support metrics for periodic reporting
+    from collections import Counter
+    quality_labels = Counter()
+    support_types = Counter()
+
     for row in cursor:
         passage_id, text = row
         batch.append((passage_id, text))
@@ -232,12 +237,23 @@ def backfill_passages(
                     # {canonical, type, aliases, confidence, evidence: {...}}
                     concepts = extractor.extract_concepts_with_evidence(text)
 
+                    # Track quality metrics for this passage
+                    if concepts and len(concepts) > 0:
+                        # Get quality from first concept (all from same passage)
+                        quality = concepts[0].get('evidence', {}).get('quality', {})
+                        quality_label = quality.get('label', 'unknown')
+                        quality_labels[quality_label] += 1
+
                     if not dry_run:
                         for concept in concepts:
                             # Evidence dict now includes standardized contract:
                             # {surface, context, support, quality, source_text}
                             # Support types: "literal"|"normalized"|"inferred"|"none"
                             evidence = concept.get("evidence")
+
+                            # Track support types
+                            support = evidence.get('support', 'unknown') if evidence else 'unknown'
+                            support_types[support] += 1
 
                             upsert_passage_concept(
                                 conn, pid,
@@ -252,7 +268,17 @@ def backfill_passages(
 
                     processed += 1
                     if processed % 100 == 0:
-                        logger.info(f"Processed {processed} passages")
+                        # Log progress with quality/support breakdown
+                        total_concepts = sum(support_types.values())
+                        literal_count = support_types.get('literal', 0)
+                        literal_pct = 100 * literal_count / total_concepts if total_concepts > 0 else 0
+
+                        logger.info(
+                            f"Processed {processed} passages | "
+                            f"Quality: {dict(quality_labels)} | "
+                            f"Support: {dict(support_types)} | "
+                            f"Grant-grade (literal): {literal_count}/{total_concepts} ({literal_pct:.1f}%)"
+                        )
 
                 except Exception as e:
                     logger.error(f"Failed to process passage {pid}: {e}")

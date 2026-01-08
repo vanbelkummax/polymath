@@ -49,8 +49,8 @@ class LocalEntityExtractor:
     Version 2: Returns typed concepts with confidence and aliases.
 
     Features:
-    - Fast model (qwen2.5:3b) for quick extraction
-    - Heavy model (deepseek-r1:8b) as fallback for complex texts
+    - Fast model (qwen2.5:7b-instruct) for quick extraction
+    - Heavy model (qwen2.5:14b-instruct) as fallback for complex texts
     - Dirty JSON parsing to handle LLM chatter
     - Retry logic with model escalation
     - Type hints for concept categorization
@@ -72,13 +72,13 @@ class LocalEntityExtractor:
         """Initialize the extractor with model configuration.
 
         Args:
-            fast_model: Quick model for simple extraction (default: qwen2.5:3b)
-            heavy_model: Fallback model for complex texts (default: deepseek-r1:8b)
+            fast_model: Quick model for simple extraction (default: qwen2.5:7b-instruct)
+            heavy_model: Fallback model for complex texts (default: qwen2.5:14b-instruct)
             timeout: Request timeout in seconds
             extractor_version: Version tag for provenance tracking
         """
-        self.fast_model = fast_model or os.environ.get("LOCAL_LLM_FAST", "qwen2.5:3b")
-        self.heavy_model = heavy_model or os.environ.get("LOCAL_LLM_HEAVY", "deepseek-r1:8b")
+        self.fast_model = fast_model or os.environ.get("LOCAL_LLM_FAST", "qwen2.5:7b-instruct")
+        self.heavy_model = heavy_model or os.environ.get("LOCAL_LLM_HEAVY", "qwen2.5:14b-instruct")
         self.timeout = timeout
         self.extractor_version = extractor_version
 
