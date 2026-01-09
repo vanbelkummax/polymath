@@ -45,33 +45,54 @@ ALLOWED_TYPES = {
     "field", "math_object", "metric", "domain", "algorithm", "technique"
 }
 
-# Default model for batch operations (use flash for better rate limits)
-DEFAULT_MODEL = "gemini-2.0-flash"
+# Default model for batch operations
+DEFAULT_MODEL = "gemini-2.0-flash"  # Winner of A/B test (8% vs 68% failure rate)
 
-# JSON schema for structured output - tighter constraints to prevent truncation
+# JSON schema for structured output - tight constraints to prevent truncation
 CONCEPT_SCHEMA = {
     "type": "object",
     "properties": {
         "concepts": {
             "type": "array",
-            "maxItems": 8,  # Cap at 8 to prevent output bloat
+            "maxItems": 8,  # Hard cap at 8 concepts
             "items": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"},
+                    "name": {"type": "string", "maxLength": 60},
                     "type": {"type": "string", "enum": list(ALLOWED_TYPES)},
-                    "aliases": {"type": "array", "items": {"type": "string"}, "maxItems": 2},
-                    "confidence": {"type": "number"},
+                    "aliases": {"type": "array", "items": {"type": "string", "maxLength": 30}, "maxItems": 3},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "evidence": {
                         "type": "object",
                         "properties": {
-                            "quote": {"type": "string"},
-                            "context": {"type": "string"}
+                            "quote": {"type": "string", "maxLength": 120},
+                            "context": {"type": "string", "maxLength": 240}
                         },
                         "required": ["quote"]
                     }
                 },
-                "required": ["name", "type", "confidence", "evidence"]
+                "required": ["name", "type", "confidence"]
+            }
+        }
+    },
+    "required": ["concepts"]
+}
+
+# Tighter schema for retry attempts
+CONCEPT_SCHEMA_TIGHT = {
+    "type": "object",
+    "properties": {
+        "concepts": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "maxLength": 50},
+                    "type": {"type": "string", "enum": list(ALLOWED_TYPES)},
+                    "confidence": {"type": "number"}
+                },
+                "required": ["name", "type", "confidence"]
             }
         }
     },
@@ -417,11 +438,12 @@ def build_evidence_jsonb(
 def run_sync_batch(
     requests: List[BatchRequest],
     model: str = DEFAULT_MODEL,
-    max_output_tokens: int = 384,
-    delay_between_requests: float = 1.0,
-    max_retries: int = 3
+    max_output_tokens: int = 512,
+    delay_between_requests: float = 0.3,
+    max_retries: int = 3,
+    parse_retries: int = 2
 ) -> List[Dict[str, Any]]:
-    """Run a batch synchronously (blocking) with rate limiting.
+    """Run a batch synchronously (blocking) with rate limiting and parse-retry.
 
     For small batches (< 100 requests), this is simpler than async polling.
     Uses individual requests with delays to avoid rate limits.
@@ -429,9 +451,10 @@ def run_sync_batch(
     Args:
         requests: List of BatchRequest objects
         model: Model ID
-        max_output_tokens: Max tokens per response
+        max_output_tokens: Max tokens per response (512 is safe for 8 concepts)
         delay_between_requests: Seconds to wait between requests
         max_retries: Max retries per request on 429 errors
+        parse_retries: Max retries on JSON parse failures
 
     Returns:
         List of {custom_id, concepts, error} dicts
@@ -444,59 +467,148 @@ def run_sync_batch(
         if i > 0:
             time.sleep(delay_between_requests)
 
-        retries = 0
-        while retries <= max_retries:
-            try:
-                prompt = build_extraction_prompt(req.text)
-
-                response = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config={
-                        "response_mime_type": "application/json",
-                        "response_schema": CONCEPT_SCHEMA,  # Enforce schema
-                        "max_output_tokens": max_output_tokens,
-                        "temperature": 0,  # Deterministic for consistency
-                    }
-                )
-
-                # Extract text from response
-                text = ""
-                if response.candidates:
-                    candidate = response.candidates[0]
-                    if candidate.content and candidate.content.parts:
-                        text = candidate.content.parts[0].text
-
-                concepts = parse_concept_response(text)
-
-                results.append({
-                    "custom_id": req.custom_id,
-                    "concepts": concepts,
-                    "raw_response": text,
-                    "error": None
-                })
-                break  # Success, exit retry loop
-
-            except Exception as e:
-                error_str = str(e)
-                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                    retries += 1
-                    if retries <= max_retries:
-                        wait_time = 2 ** retries * 10  # Exponential backoff: 20s, 40s, 80s
-                        logger.warning(f"Rate limited, waiting {wait_time}s (retry {retries}/{max_retries})")
-                        time.sleep(wait_time)
-                        continue
-
-                logger.error(f"Request {req.custom_id} failed: {e}")
-                results.append({
-                    "custom_id": req.custom_id,
-                    "concepts": [],
-                    "raw_response": None,
-                    "error": error_str
-                })
-                break
+        result = _process_single_request(
+            client, req, model, max_output_tokens, max_retries, parse_retries
+        )
+        results.append(result)
 
     return results
+
+
+def _process_single_request(
+    client,
+    req: BatchRequest,
+    model: str,
+    max_output_tokens: int,
+    max_retries: int,
+    parse_retries: int
+) -> Dict[str, Any]:
+    """Process a single request with rate-limit and parse-fail retries."""
+
+    retries = 0
+    while retries <= max_retries:
+        try:
+            prompt = build_extraction_prompt(req.text)
+
+            # First attempt with standard schema
+            concepts, raw_text, parse_ok = _call_with_retry_on_parse(
+                client, model, prompt, CONCEPT_SCHEMA, max_output_tokens, parse_retries
+            )
+
+            if concepts or parse_ok:
+                return {
+                    "custom_id": req.custom_id,
+                    "concepts": concepts,
+                    "raw_response": raw_text,
+                    "error": None
+                }
+            else:
+                # All parse retries failed - log for later
+                logger.warning(f"All parse retries failed for {req.custom_id}, raw: {raw_text[:200] if raw_text else 'None'}...")
+                return {
+                    "custom_id": req.custom_id,
+                    "concepts": [],
+                    "raw_response": raw_text,
+                    "error": "JSON_PARSE_FAILED"
+                }
+
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                retries += 1
+                if retries <= max_retries:
+                    wait_time = 2 ** retries * 10
+                    logger.warning(f"Rate limited, waiting {wait_time}s (retry {retries}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+
+            logger.error(f"Request {req.custom_id} failed: {e}")
+            return {
+                "custom_id": req.custom_id,
+                "concepts": [],
+                "raw_response": None,
+                "error": error_str
+            }
+
+    return {
+        "custom_id": req.custom_id,
+        "concepts": [],
+        "raw_response": None,
+        "error": "MAX_RETRIES_EXCEEDED"
+    }
+
+
+def _call_with_retry_on_parse(
+    client,
+    model: str,
+    prompt: str,
+    schema: Dict,
+    max_output_tokens: int,
+    parse_retries: int
+) -> Tuple[List[Dict], str, bool]:
+    """Call API with retry on JSON parse failure.
+
+    Returns:
+        Tuple of (concepts, raw_text, parse_succeeded)
+    """
+    raw_text = None
+
+    for attempt in range(parse_retries + 1):
+        try:
+            # Use tighter schema and repair prompt on retries
+            use_schema = CONCEPT_SCHEMA_TIGHT if attempt > 0 else schema
+            use_tokens = max(256, max_output_tokens - (attempt * 100))  # Reduce tokens on retry
+
+            current_prompt = prompt
+            if attempt > 0:
+                current_prompt = f"Return ONLY valid JSON matching schema, no extra text.\n\n{prompt}"
+
+            response = client.models.generate_content(
+                model=model,
+                contents=current_prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "response_schema": use_schema,
+                    "max_output_tokens": use_tokens,
+                    "temperature": 0,
+                }
+            )
+
+            # Try to get parsed response from SDK first (structured output)
+            parsed_data = None
+            if hasattr(response, 'parsed') and response.parsed:
+                parsed_data = response.parsed
+
+            # Fallback to text extraction
+            raw_text = ""
+            if response.candidates:
+                candidate = response.candidates[0]
+                if candidate.content and candidate.content.parts:
+                    raw_text = candidate.content.parts[0].text
+
+            # Use parsed data if available, otherwise parse text
+            if parsed_data:
+                if isinstance(parsed_data, dict):
+                    concepts = parsed_data.get("concepts", [])
+                else:
+                    concepts = parse_concept_response(json.dumps(parsed_data))
+                return concepts, raw_text, True
+
+            concepts = parse_concept_response(raw_text)
+            if concepts:
+                return concepts, raw_text, True
+
+            # Parse failed, will retry if attempts remain
+            if attempt < parse_retries:
+                logger.debug(f"Parse attempt {attempt + 1} failed, retrying with tighter schema")
+                time.sleep(0.2)
+
+        except json.JSONDecodeError:
+            if attempt < parse_retries:
+                logger.debug(f"JSON decode failed on attempt {attempt + 1}, retrying")
+                time.sleep(0.2)
+
+    return [], raw_text, False
 
 
 if __name__ == "__main__":
