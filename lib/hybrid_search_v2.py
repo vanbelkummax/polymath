@@ -660,6 +660,189 @@ class HybridSearcherV2:
 
         return merged
 
+    def query_passage_concepts(
+        self,
+        concept: str,
+        n: int = 20,
+        min_confidence: float = 0.7
+    ) -> List[SearchResult]:
+        """SQL search for passages by exact concept match."""
+        pg = self._get_postgres()
+        if pg is None:
+            return []
+
+        cursor = pg.cursor()
+        try:
+            cursor.execute("""
+                SELECT DISTINCT ON (pc.passage_id)
+                    pc.passage_id::text,
+                    d.title,
+                    LEFT(p.passage_text, 500),
+                    pc.confidence,
+                    pc.evidence->>'source_text' as evidence_text
+                FROM passage_concepts pc
+                JOIN passages p ON p.passage_id = pc.passage_id
+                JOIN documents d ON p.doc_id = d.doc_id
+                WHERE pc.concept_name ILIKE %s
+                  AND pc.confidence >= %s
+                ORDER BY pc.passage_id, pc.confidence DESC
+                LIMIT %s
+            """, (f"%{concept}%", min_confidence, n))
+
+            results = []
+            for row in cursor.fetchall():
+                results.append(SearchResult(
+                    id=row[0],
+                    title=row[1] or 'Unknown',
+                    content=row[2],
+                    source='sql_concept',
+                    score=float(row[3]) if row[3] else 0.8,
+                    metadata={
+                        'concept': concept,
+                        'confidence': row[3],
+                        'evidence': row[4]
+                    }
+                ))
+            return results
+        except Exception as e:
+            logger.error(f"Concept SQL search error: {e}")
+            return []
+
+    def graph_expand_concept(
+        self,
+        concept: str,
+        n_related: int = 10
+    ) -> List[str]:
+        """Get related concepts from Neo4j graph."""
+        driver = self._get_neo4j()
+        if driver is None:
+            return []
+
+        try:
+            with driver.session() as session:
+                result = session.run("""
+                    MATCH (c:CONCEPT)-[r:RELATES_TO|CO_OCCURS]-(related:CONCEPT)
+                    WHERE toLower(c.name) CONTAINS toLower($concept)
+                    RETURN DISTINCT related.name as name, r.weight as weight
+                    ORDER BY r.weight DESC
+                    LIMIT $limit
+                """, concept=concept, limit=n_related)
+
+                return [record['name'] for record in result]
+        except Exception as e:
+            logger.debug(f"Graph expansion not available: {e}")
+            return []
+
+    def atlas_search(
+        self,
+        query: str,
+        n: int = 20,
+        min_confidence: float = 0.7,
+        include_graph: bool = True
+    ) -> Dict:
+        """
+        Tri-modal search with explainability trace.
+
+        Combines:
+        1. SQL concept search - Direct passage_concepts query
+        2. Vector search - Semantic embedding similarity
+        3. Graph expansion - Related concepts from Neo4j
+
+        Returns dict with results and explain trace showing each channel's contribution.
+
+        Args:
+            query: Search query (can be concept name or natural language)
+            n: Number of results to return
+            min_confidence: Minimum confidence for SQL concept matches
+            include_graph: Whether to expand via graph (may be slow)
+
+        Returns:
+            {
+                "results": List[SearchResult],
+                "explain": {
+                    "sql": {"matched_concepts": [], "passages": [], "count": int},
+                    "vector": {"top_neighbors": [], "scores": [], "count": int},
+                    "graph": {"expanded_concepts": [], "paths_found": int}
+                }
+            }
+        """
+        explain = {
+            "sql": {"matched_concepts": [], "passages": [], "count": 0},
+            "vector": {"top_neighbors": [], "scores": [], "count": 0},
+            "graph": {"expanded_concepts": [], "paths_found": 0}
+        }
+
+        result_lists = []
+
+        # 1. SQL Concept Search - Extract concept terms from query
+        query_terms = query.lower().replace('-', '_').split()
+        sql_results = []
+
+        for term in query_terms:
+            if len(term) > 3:  # Skip short words
+                term_results = self.query_passage_concepts(term, n=n, min_confidence=min_confidence)
+                if term_results:
+                    sql_results.extend(term_results)
+                    explain["sql"]["matched_concepts"].append(term)
+
+        # Deduplicate by passage_id
+        seen_ids = set()
+        unique_sql = []
+        for r in sql_results:
+            if r.id not in seen_ids:
+                seen_ids.add(r.id)
+                unique_sql.append(r)
+
+        if unique_sql:
+            result_lists.append(unique_sql[:n])
+            explain["sql"]["count"] = len(unique_sql)
+            explain["sql"]["passages"] = [r.id for r in unique_sql[:5]]
+
+        # 2. Vector Search - Semantic similarity
+        vector_results = self.search_papers(query, n=n)
+        if vector_results:
+            result_lists.append(vector_results)
+            explain["vector"]["count"] = len(vector_results)
+            explain["vector"]["top_neighbors"] = [r.title[:50] for r in vector_results[:5]]
+            explain["vector"]["scores"] = [round(r.score, 3) for r in vector_results[:5]]
+
+        # 3. Graph Expansion - Related concepts
+        if include_graph:
+            expanded_concepts = []
+            for term in query_terms:
+                if len(term) > 3:
+                    related = self.graph_expand_concept(term, n_related=5)
+                    expanded_concepts.extend(related)
+
+            explain["graph"]["expanded_concepts"] = list(set(expanded_concepts))[:10]
+
+            # Search for expanded concepts
+            graph_results = []
+            for exp_concept in expanded_concepts[:3]:  # Limit to top 3 expansions
+                exp_results = self.query_passage_concepts(exp_concept, n=5, min_confidence=min_confidence)
+                graph_results.extend(exp_results)
+
+            # Deduplicate
+            for r in graph_results:
+                if r.id not in seen_ids:
+                    seen_ids.add(r.id)
+                    unique_sql.append(r)
+
+            if graph_results:
+                result_lists.append(graph_results[:n])
+                explain["graph"]["paths_found"] = len(graph_results)
+
+        # 4. Merge with RRF
+        if not result_lists:
+            return {"results": [], "explain": explain}
+
+        merged = reciprocal_rank_fusion(result_lists)[:n]
+
+        return {
+            "results": merged,
+            "explain": explain
+        }
+
 
 # Convenience functions
 def search(query: str, n: int = 20, **kwargs) -> List[SearchResult]:
