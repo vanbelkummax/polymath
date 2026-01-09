@@ -45,21 +45,22 @@ ALLOWED_TYPES = {
     "field", "math_object", "metric", "domain", "algorithm", "technique"
 }
 
-# Default model for batch operations
-DEFAULT_MODEL = "gemini-2.0-flash-lite"
+# Default model for batch operations (use flash for better rate limits)
+DEFAULT_MODEL = "gemini-2.0-flash"
 
-# JSON schema for structured output
+# JSON schema for structured output - tighter constraints to prevent truncation
 CONCEPT_SCHEMA = {
     "type": "object",
     "properties": {
         "concepts": {
             "type": "array",
+            "maxItems": 8,  # Cap at 8 to prevent output bloat
             "items": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
                     "type": {"type": "string", "enum": list(ALLOWED_TYPES)},
-                    "aliases": {"type": "array", "items": {"type": "string"}},
+                    "aliases": {"type": "array", "items": {"type": "string"}, "maxItems": 2},
                     "confidence": {"type": "number"},
                     "evidence": {
                         "type": "object",
@@ -70,7 +71,7 @@ CONCEPT_SCHEMA = {
                         "required": ["quote"]
                     }
                 },
-                "required": ["name", "type", "confidence"]
+                "required": ["name", "type", "confidence", "evidence"]
             }
         }
     },
@@ -78,7 +79,7 @@ CONCEPT_SCHEMA = {
 }
 
 
-def build_extraction_prompt(text: str, max_chars: int = 2000) -> str:
+def build_extraction_prompt(text: str, max_chars: int = 1200) -> str:
     """Build the concept extraction prompt.
 
     Args:
@@ -92,17 +93,11 @@ def build_extraction_prompt(text: str, max_chars: int = 2000) -> str:
     if len(text) > max_chars:
         text = text[:max_chars] + "..."
 
-    return f"""Extract 5-12 scientific concepts from this text.
-
-For each concept provide:
-- name: snake_case identifier
-- type: one of [method, objective, prior, model, dataset, field, math_object, metric, domain, algorithm, technique]
-- aliases: alternative names (empty list if none)
-- confidence: 0.0-1.0
-- evidence: {{quote: exact phrase from text (<=160 chars), context: surrounding text (<=300 chars)}}
-
-Text:
-{text}"""
+    # Minimal prompt to reduce output tokens
+    return f"""Extract 5-8 key scientific concepts from this text as JSON.
+Format: {{"concepts":[{{"name":"snake_case","type":"domain|method|model|metric|technique","confidence":0.8,"quote":"short quote"}}]}}
+Types: domain, method, model, metric, technique, dataset, algorithm, field, objective, prior, math_object
+Text: {text}"""
 
 
 @dataclass
@@ -273,7 +268,14 @@ def parse_concept_response(response_text: str) -> List[Dict[str, Any]]:
 
     try:
         data = json.loads(response_text)
-        concepts = data.get("concepts", [])
+
+        # Handle different response formats
+        if isinstance(data, list):
+            concepts = data  # Direct list of concepts
+        elif isinstance(data, dict):
+            concepts = data.get("concepts", [])
+        else:
+            return []
 
         # Validate and normalize each concept
         valid_concepts = []
@@ -415,17 +417,21 @@ def build_evidence_jsonb(
 def run_sync_batch(
     requests: List[BatchRequest],
     model: str = DEFAULT_MODEL,
-    max_output_tokens: int = 384
+    max_output_tokens: int = 384,
+    delay_between_requests: float = 1.0,
+    max_retries: int = 3
 ) -> List[Dict[str, Any]]:
-    """Run a batch synchronously (blocking).
+    """Run a batch synchronously (blocking) with rate limiting.
 
     For small batches (< 100 requests), this is simpler than async polling.
-    Uses individual requests if batch API is unavailable.
+    Uses individual requests with delays to avoid rate limits.
 
     Args:
         requests: List of BatchRequest objects
         model: Model ID
         max_output_tokens: Max tokens per response
+        delay_between_requests: Seconds to wait between requests
+        max_retries: Max retries per request on 429 errors
 
     Returns:
         List of {custom_id, concepts, error} dicts
@@ -433,45 +439,62 @@ def run_sync_batch(
     client = get_genai_client()
     results = []
 
-    for req in requests:
-        try:
-            prompt = build_extraction_prompt(req.text)
+    for i, req in enumerate(requests):
+        # Add delay between requests to avoid rate limits
+        if i > 0:
+            time.sleep(delay_between_requests)
 
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_schema": CONCEPT_SCHEMA,
-                    "max_output_tokens": max_output_tokens,
-                    "temperature": 0.1,
-                }
-            )
+        retries = 0
+        while retries <= max_retries:
+            try:
+                prompt = build_extraction_prompt(req.text)
 
-            # Extract text from response
-            text = ""
-            if response.candidates:
-                candidate = response.candidates[0]
-                if candidate.content and candidate.content.parts:
-                    text = candidate.content.parts[0].text
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config={
+                        "response_mime_type": "application/json",
+                        "response_schema": CONCEPT_SCHEMA,  # Enforce schema
+                        "max_output_tokens": max_output_tokens,
+                        "temperature": 0,  # Deterministic for consistency
+                    }
+                )
 
-            concepts = parse_concept_response(text)
+                # Extract text from response
+                text = ""
+                if response.candidates:
+                    candidate = response.candidates[0]
+                    if candidate.content and candidate.content.parts:
+                        text = candidate.content.parts[0].text
 
-            results.append({
-                "custom_id": req.custom_id,
-                "concepts": concepts,
-                "raw_response": text,
-                "error": None
-            })
+                concepts = parse_concept_response(text)
 
-        except Exception as e:
-            logger.error(f"Request {req.custom_id} failed: {e}")
-            results.append({
-                "custom_id": req.custom_id,
-                "concepts": [],
-                "raw_response": None,
-                "error": str(e)
-            })
+                results.append({
+                    "custom_id": req.custom_id,
+                    "concepts": concepts,
+                    "raw_response": text,
+                    "error": None
+                })
+                break  # Success, exit retry loop
+
+            except Exception as e:
+                error_str = str(e)
+                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                    retries += 1
+                    if retries <= max_retries:
+                        wait_time = 2 ** retries * 10  # Exponential backoff: 20s, 40s, 80s
+                        logger.warning(f"Rate limited, waiting {wait_time}s (retry {retries}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+
+                logger.error(f"Request {req.custom_id} failed: {e}")
+                results.append({
+                    "custom_id": req.custom_id,
+                    "concepts": [],
+                    "raw_response": None,
+                    "error": error_str
+                })
+                break
 
     return results
 

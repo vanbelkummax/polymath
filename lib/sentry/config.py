@@ -13,20 +13,22 @@ import os
 
 BRAVE_API_KEY = os.environ.get("BRAVE_API_KEY", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", os.environ.get("GITHUB_PAT", ""))
+SEMANTICSCHOLAR_API_KEY = os.environ.get("SEMANTICSCHOLAR_API_KEY", "")
 
 # ============================================================
 # RATE LIMITS (requests per second)
 # ============================================================
 
 RATE_LIMITS = {
-    "europepmc": 10.0,      # Europe PMC is generous
-    "arxiv": 0.33,          # 1 request per 3 seconds
+    "europepmc": 10.0,        # Europe PMC is generous
+    "arxiv": 0.33,            # 1 request per 3 seconds
     "biorxiv": 1.0,
-    "github": 0.5,          # 30 req/min unauthenticated
+    "github": 0.5,            # 30 req/min unauthenticated
     "youtube": 1.0,
     "brave": 1.0,
     "unpaywall": 1.0,
-    "openalex": 10.0,       # Polite pool with email (250M+ works)
+    "openalex": 10.0,         # Polite pool with email (250M+ works)
+    "semanticscholar": 1.0,   # 1 req/sec with API key (200M+ papers)
 }
 
 # ============================================================

@@ -907,8 +907,19 @@ class UnifiedIngestor:
         for robust concept extraction. Concepts are normalized to snake_case.
         """
         concepts = self.extractor.extract_concepts(text)
-        # Normalize: lowercase, strip whitespace
-        return [c.lower().strip() for c in concepts if c]
+        # Normalize: handle both dict format {name: ...} and string format
+        result = []
+        for c in concepts:
+            if not c:
+                continue
+            # Handle dict format from LocalEntityExtractor
+            if isinstance(c, dict):
+                name = c.get('name', c.get('canonical', ''))
+            else:
+                name = str(c)
+            if name:
+                result.append(name.lower().strip())
+        return result
 
     def ingest_pdf(
         self,

@@ -33,6 +33,7 @@ from .sources.arxiv import ArxivSource
 from .sources.biorxiv import BioRxivSource, MedRxivSource
 from .sources.github import GitHubSource
 from .sources.openalex import OpenAlexSource
+from .sources.semanticscholar import SemanticScholarSource
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class Sentry:
         # Source connectors - OpenAlex first for comprehensive metadata discovery
         self.sources = {
             "openalex": OpenAlexSource(),  # 250M+ works, global metadata
+            "semanticscholar": SemanticScholarSource(),  # 200M+ papers, citation graphs
             "europepmc": EuropePMCSource(),  # Full-text availability
             "arxiv": ArxivSource(),
             "biorxiv": BioRxivSource(),

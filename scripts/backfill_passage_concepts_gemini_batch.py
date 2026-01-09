@@ -63,12 +63,15 @@ EXTRACTOR_VERSION = "gemini_batch_v1"
 JOB_NAME = f"backfill_passage_concepts_{EXTRACTOR_VERSION}"
 BATCH_SIZE = 50  # Passages per API batch (for sync mode)
 MAX_TEXT_CHARS = 2000  # Truncate passages longer than this
+DEFAULT_DELAY = 0.3  # Seconds between API requests (was 1.0, reduced since no rate limits hit)
 
 
 def fetch_remaining_passages(
     conn,
     limit: Optional[int] = None,
-    after_id: Optional[str] = None
+    after_id: Optional[str] = None,
+    worker_id: Optional[int] = None,
+    num_workers: Optional[int] = None
 ) -> List[Tuple[str, str]]:
     """Fetch passages that don't have gemini_batch_v1 concepts.
 
@@ -76,6 +79,8 @@ def fetch_remaining_passages(
         conn: Database connection
         limit: Max passages to fetch (None = all)
         after_id: Resume after this passage_id
+        worker_id: Worker ID for sharding (0 to num_workers-1)
+        num_workers: Total number of parallel workers
 
     Returns:
         List of (passage_id, passage_text) tuples
@@ -96,6 +101,10 @@ def fetch_remaining_passages(
     if after_id:
         query += " AND p.passage_id > %s::uuid"
         params.append(after_id)
+
+    # Shard by worker using modulo on passage_id hash
+    if worker_id is not None and num_workers is not None and num_workers > 1:
+        query += f" AND MOD(('x' || SUBSTRING(p.passage_id::text, 1, 8))::bit(32)::int, {num_workers}) = {worker_id}"
 
     query += " ORDER BY p.passage_id"
 
@@ -129,7 +138,8 @@ def count_remaining_passages(conn) -> int:
 def process_batch(
     conn,
     passages: List[Tuple[str, str]],
-    dry_run: bool = False
+    dry_run: bool = False,
+    delay: float = DEFAULT_DELAY
 ) -> Dict[str, int]:
     """Process a batch of passages through Gemini API.
 
@@ -137,6 +147,7 @@ def process_batch(
         conn: Database connection
         passages: List of (passage_id, passage_text) tuples
         dry_run: If True, don't write to database
+        delay: Seconds between API requests
 
     Returns:
         Dict with success_count, fail_count, concepts_inserted
@@ -147,8 +158,14 @@ def process_batch(
         for pid, text in passages
     ]
 
-    # Run through Gemini API (sync mode for simplicity)
-    results = run_sync_batch(requests, model=EXTRACTOR_MODEL, max_output_tokens=384)
+    # Run through Gemini API (sync mode with rate limiting)
+    results = run_sync_batch(
+        requests,
+        model=EXTRACTOR_MODEL,
+        max_output_tokens=384,  # Reduced to prevent truncation
+        delay_between_requests=delay,
+        max_retries=5
+    )
 
     stats = {"success": 0, "failed": 0, "concepts": 0}
 
@@ -196,15 +213,16 @@ def process_batch(
     return stats
 
 
-def run_pilot(conn, n: int = 200, dry_run: bool = False) -> None:
+def run_pilot(conn, n: int = 200, dry_run: bool = False, delay: float = DEFAULT_DELAY) -> None:
     """Run pilot extraction on N passages.
 
     Args:
         conn: Database connection
         n: Number of passages to process
         dry_run: If True, don't write to database
+        delay: Seconds between API requests
     """
-    logger.info(f"Starting pilot run with {n} passages (dry_run={dry_run})")
+    logger.info(f"Starting pilot run with {n} passages (dry_run={dry_run}, delay={delay}s)")
 
     # Fetch passages
     passages = fetch_remaining_passages(conn, limit=n)
@@ -221,7 +239,7 @@ def run_pilot(conn, n: int = 200, dry_run: bool = False) -> None:
         batch = passages[i:i + BATCH_SIZE]
         logger.info(f"Processing batch {i // BATCH_SIZE + 1}/{(len(passages) + BATCH_SIZE - 1) // BATCH_SIZE}")
 
-        stats = process_batch(conn, batch, dry_run=dry_run)
+        stats = process_batch(conn, batch, dry_run=dry_run, delay=delay)
 
         total_stats["success"] += stats["success"]
         total_stats["failed"] += stats["failed"]
@@ -258,25 +276,39 @@ def run_pilot(conn, n: int = 200, dry_run: bool = False) -> None:
     generate_qc_report(conn, "pilot")
 
 
-def run_full_backfill(conn, dry_run: bool = False, resume: bool = True) -> None:
+def run_full_backfill(
+    conn,
+    dry_run: bool = False,
+    resume: bool = True,
+    worker_id: Optional[int] = None,
+    num_workers: int = 1,
+    delay: float = DEFAULT_DELAY
+) -> None:
     """Run full backfill of all remaining passages.
 
     Args:
         conn: Database connection
         dry_run: If True, don't write to database
         resume: If True, resume from last checkpoint
+        worker_id: Worker ID for sharding (0 to num_workers-1)
+        num_workers: Total number of parallel workers
+        delay: Seconds between API requests
     """
+    worker_suffix = f"_w{worker_id}" if worker_id is not None else ""
+    job_name = JOB_NAME + worker_suffix
+
     # Get checkpoint if resuming
     after_id = None
     if resume:
-        checkpoint = get_migration_checkpoint(conn, JOB_NAME)
+        checkpoint = get_migration_checkpoint(conn, job_name)
         if checkpoint and checkpoint.get("status") == "running":
             after_id = checkpoint.get("cursor_position")
             logger.info(f"Resuming from checkpoint: {after_id}")
 
     # Count remaining
     remaining = count_remaining_passages(conn)
-    logger.info(f"Starting full backfill: {remaining} passages remaining")
+    worker_info = f" (worker {worker_id}/{num_workers})" if worker_id is not None else ""
+    logger.info(f"Starting full backfill{worker_info}: {remaining} passages remaining, delay={delay}s")
 
     if remaining == 0:
         logger.info("No remaining passages to process")
@@ -286,7 +318,7 @@ def run_full_backfill(conn, dry_run: bool = False, resume: bool = True) -> None:
     if not after_id:
         update_migration_checkpoint(
             conn,
-            job_name=JOB_NAME,
+            job_name=job_name,
             cursor_position=None,
             status="running",
             items_processed=0,
@@ -298,16 +330,22 @@ def run_full_backfill(conn, dry_run: bool = False, resume: bool = True) -> None:
     batch_num = 0
 
     while True:
-        # Fetch next batch
-        passages = fetch_remaining_passages(conn, limit=BATCH_SIZE, after_id=after_id)
+        # Fetch next batch with worker sharding
+        passages = fetch_remaining_passages(
+            conn,
+            limit=BATCH_SIZE,
+            after_id=after_id,
+            worker_id=worker_id,
+            num_workers=num_workers
+        )
 
         if not passages:
             break
 
         batch_num += 1
-        logger.info(f"Processing batch {batch_num} ({len(passages)} passages)")
+        logger.info(f"Processing batch {batch_num} ({len(passages)} passages){worker_info}")
 
-        stats = process_batch(conn, passages, dry_run=dry_run)
+        stats = process_batch(conn, passages, dry_run=dry_run, delay=delay)
 
         total_stats["success"] += stats["success"]
         total_stats["failed"] += stats["failed"]
@@ -318,7 +356,7 @@ def run_full_backfill(conn, dry_run: bool = False, resume: bool = True) -> None:
             last_id = passages[-1][0]
             update_migration_checkpoint(
                 conn,
-                job_name=JOB_NAME,
+                job_name=job_name,
                 cursor_position=last_id,
                 status="running",
                 items_processed=stats["success"],
@@ -329,13 +367,13 @@ def run_full_backfill(conn, dry_run: bool = False, resume: bool = True) -> None:
 
         # Log progress periodically
         if batch_num % 10 == 0:
-            logger.info(f"Progress: {total_stats['success']} success, {total_stats['concepts']} concepts")
+            logger.info(f"Progress{worker_info}: {total_stats['success']} success, {total_stats['concepts']} concepts")
 
     # Mark complete
     if not dry_run:
         update_migration_checkpoint(
             conn,
-            job_name=JOB_NAME,
+            job_name=job_name,
             cursor_position=None,
             status="completed",
             items_processed=0,
@@ -343,10 +381,11 @@ def run_full_backfill(conn, dry_run: bool = False, resume: bool = True) -> None:
             notes=f"Complete: {total_stats['success']} passages, {total_stats['concepts']} concepts"
         )
 
-    logger.info(f"Full backfill complete: {total_stats}")
+    logger.info(f"Full backfill complete{worker_info}: {total_stats}")
 
-    # Generate QC report
-    generate_qc_report(conn, "full")
+    # Generate QC report (only for single worker or worker 0)
+    if worker_id is None or worker_id == 0:
+        generate_qc_report(conn, "full")
 
 
 def generate_qc_report(conn, run_type: str) -> None:
@@ -439,9 +478,9 @@ def generate_qc_report(conn, run_type: str) -> None:
 ## Concepts Per Passage
 | Metric | Value |
 |--------|-------|
-| Average | {concept_stats[0]:.2f if concept_stats and concept_stats[0] else 'N/A'} |
-| P10 | {concept_stats[1]:.1f if concept_stats and concept_stats[1] else 'N/A'} |
-| P90 | {concept_stats[2]:.1f if concept_stats and concept_stats[2] else 'N/A'} |
+| Average | {f"{concept_stats[0]:.2f}" if concept_stats and concept_stats[0] is not None else 'N/A'} |
+| P10 | {f"{concept_stats[1]:.1f}" if concept_stats and concept_stats[1] is not None else 'N/A'} |
+| P90 | {f"{concept_stats[2]:.1f}" if concept_stats and concept_stats[2] is not None else 'N/A'} |
 
 ## Type Distribution
 | Type | Count |
@@ -562,7 +601,24 @@ def show_cost_estimate(conn) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Backfill passage concepts with Gemini Batch API")
+    parser = argparse.ArgumentParser(
+        description="Backfill passage concepts with Gemini Batch API",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run pilot (200 passages)
+  python %(prog)s --pilot
+
+  # Run full backfill with 4 parallel workers
+  python %(prog)s --full --worker-id 0 --num-workers 4 &
+  python %(prog)s --full --worker-id 1 --num-workers 4 &
+  python %(prog)s --full --worker-id 2 --num-workers 4 &
+  python %(prog)s --full --worker-id 3 --num-workers 4 &
+
+  # Check status
+  python %(prog)s --status
+"""
+    )
     parser.add_argument("--pilot", action="store_true", help="Run pilot (200 passages)")
     parser.add_argument("--pilot-n", type=int, default=200, help="Number of passages for pilot")
     parser.add_argument("--full", action="store_true", help="Run full backfill")
@@ -571,7 +627,24 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Don't write to database")
     parser.add_argument("--no-resume", action="store_true", help="Start fresh (don't resume)")
 
+    # Parallel worker options
+    parser.add_argument("--worker-id", type=int, default=None,
+                        help="Worker ID for parallel processing (0 to num_workers-1)")
+    parser.add_argument("--num-workers", type=int, default=1,
+                        help="Total number of parallel workers (default: 1)")
+    parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
+                        help=f"Delay between API requests in seconds (default: {DEFAULT_DELAY})")
+
     args = parser.parse_args()
+
+    # Validate worker args
+    if args.worker_id is not None:
+        if args.num_workers <= 1:
+            print("ERROR: --worker-id requires --num-workers > 1")
+            sys.exit(1)
+        if args.worker_id < 0 or args.worker_id >= args.num_workers:
+            print(f"ERROR: --worker-id must be 0 to {args.num_workers - 1}")
+            sys.exit(1)
 
     # Ensure GEMINI_API_KEY is set for API operations
     if (args.pilot or args.full) and not os.environ.get("GEMINI_API_KEY"):
@@ -591,9 +664,16 @@ def main():
         elif args.estimate:
             show_cost_estimate(conn)
         elif args.pilot:
-            run_pilot(conn, n=args.pilot_n, dry_run=args.dry_run)
+            run_pilot(conn, n=args.pilot_n, dry_run=args.dry_run, delay=args.delay)
         elif args.full:
-            run_full_backfill(conn, dry_run=args.dry_run, resume=not args.no_resume)
+            run_full_backfill(
+                conn,
+                dry_run=args.dry_run,
+                resume=not args.no_resume,
+                worker_id=args.worker_id,
+                num_workers=args.num_workers,
+                delay=args.delay
+            )
         else:
             parser.print_help()
 
