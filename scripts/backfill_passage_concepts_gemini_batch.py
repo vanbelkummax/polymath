@@ -162,7 +162,7 @@ def process_batch(
     results = run_sync_batch(
         requests,
         model=EXTRACTOR_MODEL,
-        max_output_tokens=384,  # Reduced to prevent truncation
+        max_output_tokens=512,  # 512 is safe for 8 concepts with evidence
         delay_between_requests=delay,
         max_retries=5
     )
