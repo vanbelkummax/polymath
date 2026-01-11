@@ -30,7 +30,7 @@ from pathlib import Path
 # Local imports
 from lib.hybrid_search_v2 import HybridSearcherV2
 from lib.answer_pack import AnswerPackGenerator, AnswerPack
-from lib.db import get_pg_connection
+from lib.db import get_db_connection
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -221,7 +221,7 @@ class HackathonMode:
         self.searcher = HybridSearcherV2()
         self.answer_gen = AnswerPackGenerator(llm_client)
         self.llm = llm_client
-        self.conn = get_pg_connection()
+        self.conn = get_db_connection()
 
     def analyze(self, topic: str, time_budget_minutes: int = 10) -> HackathonBrief:
         """

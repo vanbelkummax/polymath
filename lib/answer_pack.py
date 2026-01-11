@@ -24,7 +24,7 @@ import uuid
 
 # Local imports
 from lib.hybrid_search_v2 import HybridSearcherV2
-from lib.db import get_pg_connection
+from lib.db import get_db_connection
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -237,7 +237,7 @@ class AnswerPackGenerator:
         """
         self.searcher = HybridSearcherV2()
         self.llm = llm_client
-        self.conn = get_pg_connection()
+        self.conn = get_db_connection()
 
     def generate(
         self,

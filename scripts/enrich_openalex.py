@@ -39,7 +39,7 @@ from psycopg2.extras import execute_values, Json
 
 # Add lib to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from lib.config import get_pg_connection
+from lib.db import get_db_connection
 
 logging.basicConfig(
     level=logging.INFO,
@@ -202,17 +202,20 @@ async def enrich_document(
         # Get author info
         authors_enriched = []
         for authorship in work.get("authorships", []):
-            author = authorship.get("author", {})
+            author = authorship.get("author", {}) or {}
             institutions = []
             for inst in authorship.get("institutions", []):
-                institutions.append({
-                    "id": inst.get("id", "").replace("https://openalex.org/", ""),
-                    "name": inst.get("display_name"),
-                    "country": inst.get("country_code")
-                })
+                if inst:  # Some institutions can be None
+                    inst_id = inst.get("id") or ""
+                    institutions.append({
+                        "id": inst_id.replace("https://openalex.org/", "") if inst_id else "",
+                        "name": inst.get("display_name"),
+                        "country": inst.get("country_code")
+                    })
 
+            author_id = author.get("id") or ""
             authors_enriched.append({
-                "id": author.get("id", "").replace("https://openalex.org/", ""),
+                "id": author_id.replace("https://openalex.org/", "") if author_id else "",
                 "name": author.get("display_name"),
                 "orcid": author.get("orcid"),
                 "institutions": institutions
@@ -304,9 +307,9 @@ def ensure_schema(conn):
         # Create citation graph table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS citation_graph (
-                source_doc_id UUID REFERENCES documents(id),
+                source_doc_id UUID REFERENCES documents(doc_id),
                 target_openalex_id TEXT NOT NULL,
-                target_doc_id UUID REFERENCES documents(id),  -- NULL if we don't have the paper
+                target_doc_id UUID REFERENCES documents(doc_id),  -- NULL if we don't have the paper
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source_doc_id, target_openalex_id)
             );
@@ -349,7 +352,7 @@ def save_enrichment(conn, result: EnrichmentResult):
                     openalex_concepts = %s,
                     authors_enriched = %s,
                     openalex_enriched_at = CURRENT_TIMESTAMP
-                WHERE id = %s
+                WHERE doc_id = %s
             """, (
                 result.openalex_id,
                 result.cited_by_count,
@@ -361,10 +364,10 @@ def save_enrichment(conn, result: EnrichmentResult):
 
             # Insert citation graph edges
             if result.reference_ids:
-                # First, try to match reference IDs to our documents
+                # Insert edges (target_doc_id will be linked in the UPDATE below)
                 values = [(result.doc_id, ref_id) for ref_id in result.reference_ids]
                 execute_values(cur, """
-                    INSERT INTO citation_graph (source_doc_id, target_openalex_id, target_doc_id)
+                    INSERT INTO citation_graph (source_doc_id, target_openalex_id)
                     VALUES %s
                     ON CONFLICT (source_doc_id, target_openalex_id) DO NOTHING
                 """, values)
@@ -372,7 +375,7 @@ def save_enrichment(conn, result: EnrichmentResult):
                 # Link to documents we have
                 cur.execute("""
                     UPDATE citation_graph cg
-                    SET target_doc_id = d.id
+                    SET target_doc_id = d.doc_id
                     FROM documents d
                     WHERE cg.source_doc_id = %s
                       AND d.openalex_id = cg.target_openalex_id
@@ -388,7 +391,7 @@ async def enrich_all(conn, missing_only: bool = False, batch_size: int = 50):
     with conn.cursor() as cur:
         if missing_only:
             cur.execute("""
-                SELECT id, doi, pmid, title, year
+                SELECT doc_id, doi, pmid, title, year
                 FROM documents
                 WHERE openalex_id IS NULL
                   AND (doi IS NOT NULL OR pmid IS NOT NULL OR title IS NOT NULL)
@@ -396,7 +399,7 @@ async def enrich_all(conn, missing_only: bool = False, batch_size: int = 50):
             """)
         else:
             cur.execute("""
-                SELECT id, doi, pmid, title, year
+                SELECT doc_id, doi, pmid, title, year
                 FROM documents
                 WHERE doi IS NOT NULL OR pmid IS NOT NULL OR title IS NOT NULL
                 ORDER BY year DESC NULLS LAST
@@ -521,7 +524,7 @@ def main():
 
     args = parser.parse_args()
 
-    conn = get_pg_connection()
+    conn = get_db_connection()
 
     try:
         ensure_schema(conn)
@@ -529,8 +532,8 @@ def main():
         if args.doc_id:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id, doi, pmid, title, year
-                    FROM documents WHERE id = %s
+                    SELECT doc_id, doi, pmid, title, year
+                    FROM documents WHERE doc_id = %s
                 """, (args.doc_id,))
                 row = cur.fetchone()
                 if not row:
