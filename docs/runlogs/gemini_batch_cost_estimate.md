@@ -1,19 +1,19 @@
 # Gemini Batch Cost Estimate
-**Generated**: 2026-01-08T13:22:02.352985
+**Generated**: 2026-01-10T15:30:26.901429
 
 ## Parameters
-- Remaining passages: 549,116
-- Avg passage length: 478 chars
+- Remaining passages: 298,915
+- Avg passage length: 476 chars
 - Model: gemini-2.0-flash
 
 ## Token Estimates
-- Input: 106,528,504 tokens
-- Output: 126,516,326 tokens
+- Input: 57,989,510 tokens
+- Output: 68,870,016 tokens
 
 ## Cost Breakdown
-- Input cost: $1.9974
-- Output cost: $9.4887
-- **Total: $11.49**
+- Input cost: $1.0873
+- Output cost: $5.1653
+- **Total: $6.25**
 
 ## Notes
 - Batch API pricing (50% discount vs real-time)

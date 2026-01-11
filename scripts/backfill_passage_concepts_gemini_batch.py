@@ -103,8 +103,9 @@ def fetch_remaining_passages(
         params.append(after_id)
 
     # Shard by worker using modulo on passage_id hash
+    # NOTE: Use ABS() because bit(32)::int can be negative (signed), and PostgreSQL MOD preserves sign
     if worker_id is not None and num_workers is not None and num_workers > 1:
-        query += f" AND MOD(('x' || SUBSTRING(p.passage_id::text, 1, 8))::bit(32)::int, {num_workers}) = {worker_id}"
+        query += f" AND ABS(MOD(('x' || SUBSTRING(p.passage_id::text, 1, 8))::bit(32)::int, {num_workers})) = {worker_id}"
 
     query += " ORDER BY p.passage_id"
 

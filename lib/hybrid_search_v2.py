@@ -272,8 +272,13 @@ class HybridSearcherV2:
         if reranker is None:
             return results
 
-        # Prepare passages for reranking
-        passages = [r.content[:512] for r in results]  # Truncate for speed
+        # Prepare passages for reranking - include title for better context
+        passages = []
+        for r in results:
+            # Combine title and content for better relevance matching
+            title = r.title if not _is_placeholder_title(r.title) else ""
+            passage = f"{title}\n{r.content}" if title else r.content
+            passages.append(passage[:512])  # Truncate for speed
 
         try:
             # Get reranker scores - API differs between FlagReranker and CrossEncoder
