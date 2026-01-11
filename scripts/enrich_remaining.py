@@ -14,12 +14,16 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import time
 from pathlib import Path
 from datetime import datetime
 import httpx
+
+# Semantic Scholar API key (1 req/sec with key vs 100 req/5min without)
+S2_API_KEY = os.getenv("SEMANTICSCHOLAR_API_KEY", "")
 
 CITATIONS_FILE = Path("/home/user/polymath-repo/data/citations/pdf_citations.json")
 NEEDS_REVIEW_FILE = Path("/home/user/polymath-repo/data/citations/needs_review.json")
@@ -125,9 +129,12 @@ def lookup_semantic_scholar(title: str) -> dict:
             'limit': 1,
             'fields': 'title,authors,year,abstract,externalIds,url'
         }
+        headers = {}
+        if S2_API_KEY:
+            headers['x-api-key'] = S2_API_KEY
 
         with httpx.Client(timeout=15) as client:
-            resp = client.get(url, params=params)
+            resp = client.get(url, params=params, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get('data'):
@@ -192,6 +199,7 @@ def enrich_with_arxiv(needs_review: list, citations: dict, dry_run: bool = False
 def enrich_with_semantic_scholar(needs_review: list, citations: dict, dry_run: bool = False) -> int:
     """Enrich items by extracting title and searching Semantic Scholar."""
     log("=== Strategy 2: Semantic Scholar ===")
+    log(f"API key: {'present' if S2_API_KEY else 'missing (rate limited)'}")
 
     enriched = 0
     for i, item in enumerate(needs_review):
@@ -220,8 +228,8 @@ def enrich_with_semantic_scholar(needs_review: list, citations: dict, dry_run: b
                 citations[filename]['confidence'] = 0.85
             enriched += 1
 
-        # Rate limit (100 requests per 5 min for unauthenticated)
-        time.sleep(3)
+        # Rate limit: 1 req/sec with API key, 100 req/5min without
+        time.sleep(1.1 if S2_API_KEY else 3)
 
         if (i + 1) % 50 == 0:
             log(f"Progress: {i+1}/{len(needs_review)}, enriched: {enriched}")
