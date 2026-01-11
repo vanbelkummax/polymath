@@ -1,0 +1,46 @@
+[
+  {
+    "timestamp": "2026-01-11T00:37:02.121936",
+    "num_queries": 14,
+    "mean_recall": 0.7928571428571428,
+    "mean_mrr": 0.7083333333333334,
+    "by_domain": {
+      "ml_foundations": {
+        "mean_recall": 0.8333333333333334,
+        "mean_mrr": 0.6666666666666666,
+        "count": 3
+      },
+      "spatial_biology": {
+        "mean_recall": 0.9166666666666666,
+        "mean_mrr": 0.8333333333333334,
+        "count": 3
+      },
+      "comp_pathology": {
+        "mean_recall": 0.875,
+        "mean_mrr": 0.5833333333333334,
+        "count": 2
+      },
+      "information_theory": {
+        "mean_recall": 0.5,
+        "mean_mrr": 1.0,
+        "count": 2
+      },
+      "single_cell": {
+        "mean_recall": 0.55,
+        "mean_mrr": 0.375,
+        "count": 2
+      },
+      "graph_ml": {
+        "mean_recall": 1.0,
+        "mean_mrr": 0.5,
+        "count": 1
+      },
+      "cancer_biology": {
+        "mean_recall": 1.0,
+        "mean_mrr": 1.0,
+        "count": 1
+      }
+    },
+    "failed_queries": []
+  }
+]
