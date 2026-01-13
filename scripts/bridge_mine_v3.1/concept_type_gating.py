@@ -75,7 +75,7 @@ CATEGORIES:
   Examples: "clinical validation", "regulatory approval", "trial design"
 
 Output ONLY the category name (METHOD, PROBLEM, OUTCOME, DATASET, EVAL, or CLINICAL_PROCESS).
-If unclear, output METHOD (most concepts are techniques)."""
+If unclear, output UNKNOWN."""
 
 
 # Known type mappings for common concepts (fast path)
@@ -173,7 +173,9 @@ def classify_concept(concept: str, context: str = "") -> ConceptType:
                 KNOWN_TYPES[normalized] = ctype
                 return ctype
 
-        return ConceptType.METHOD  # Default assumption
+        # Default to UNKNOWN - forces manual review/lower ranking
+        # (Changed from METHOD to prevent garbage sneaking through as valid bridges)
+        return ConceptType.UNKNOWN
 
     except Exception as e:
         print(f"  Type classification error for '{concept}': {e}")

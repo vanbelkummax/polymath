@@ -67,6 +67,17 @@ NOISE_CONCEPTS = {
     'dataset', 'datasets', 'metric', 'metrics', 'benchmark', 'benchmarks',
 }
 
+# Filter out overly generic paradigms (keep specific techniques)
+OVERLY_GENERIC = {
+    'deep_learning', 'machine_learning', 'neural_network', 'neural_networks',
+    'optimization', 'regression', 'classification', 'clustering',
+    'supervised_learning', 'unsupervised_learning', 'reinforcement_learning',
+    'artificial_intelligence', 'ai', 'ml', 'dl',
+    'convolutional_neural_network', 'cnn', 'cnns',  # Too generic, keep specific architectures
+    'recurrent_neural_network', 'rnn', 'rnns',
+    'data_mining', 'pattern_recognition', 'feature_extraction',
+}
+
 # Minimum mentions for a concept to be included
 MIN_MENTIONS = 5
 
@@ -122,6 +133,10 @@ def extract_typed_concepts(pg_conn) -> Dict[str, TypedConcept]:
 
         # Skip noise
         if name.lower() in NOISE_CONCEPTS:
+            continue
+
+        # Skip overly generic paradigms (keep specific techniques)
+        if name.lower().replace(' ', '_') in OVERLY_GENERIC:
             continue
 
         # Map to v3.1 type

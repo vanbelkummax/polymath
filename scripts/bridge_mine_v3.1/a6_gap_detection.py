@@ -226,9 +226,13 @@ def run_focused_gap_detection(driver, spatial_problems: List[dict], transfer_met
         # Query 1: Find methods that solve non-spatial problems similar to spatial problems
         print("\nQuery: Methods solving similar problems not yet applied to spatial...")
 
+        # Convert transfer_names to list for Neo4j parameter
+        transfer_names_list = list(transfer_names)
+
         result = session.run("""
             MATCH (m:METHOD)-[:SOLVES]->(p1:PROBLEM)-[:SIMILAR_TO]-(p2:PROBLEM)
             WHERE NOT (m)-[:SOLVES]->(p2)
+              AND m.name IN $transfer_methods
             WITH m, p1, p2,
                  m.mention_count as method_mentions,
                  m.doc_count as method_docs
@@ -239,7 +243,7 @@ def run_focused_gap_detection(driver, spatial_problems: List[dict], transfer_met
                    method_docs
             ORDER BY method_mentions DESC
             LIMIT 100
-        """)
+        """, transfer_methods=transfer_names_list)
 
         for r in result:
             method = r['method']
