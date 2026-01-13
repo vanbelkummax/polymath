@@ -32,7 +32,7 @@ from lib.config import (
 # Local LLM-based entity extraction (replaces regex-based extraction)
 from lib.local_extractor import LocalEntityExtractor
 from lib.enhanced_pdf_parser import EnhancedPDFParser, Passage
-from lib.doc_identity import compute_doc_id, upsert_document
+from lib.doc_identity import compute_doc_id, upsert_document, lookup_doc_by_title_hash, get_or_create_doc_id
 
 try:
     from psycopg2.extras import execute_values
@@ -541,7 +541,8 @@ class UnifiedIngestor:
                     p.page_char_start,
                     p.page_char_end,
                     p.section,
-                    p.passage_text,
+                    # Strip NUL characters - PostgreSQL rejects them (bug fix 2026-01-12)
+                    p.passage_text.replace('\x00', '') if p.passage_text else '',
                     p.quality_score,
                     p.parser_version,
                 )
@@ -965,15 +966,27 @@ class UnifiedIngestor:
         arxiv_id = metadata.get("arxiv_id")
         file_hash = metadata.get("file_hash", self._file_hash(pdf_path))
 
-        # Deterministic document identity
-        doc_id = compute_doc_id(
-            title=title,
-            authors=authors,
-            year=year,
-            doi=doi,
-            pmid=pmid,
-            arxiv_id=arxiv_id,
-        )
+        # Get postgres connection early for title_hash lookup
+        pg = self._get_postgres()
+
+        # CRITICAL: Check for existing document by title_hash FIRST
+        # This handles citation nodes that exist without DOI/PMID - we upgrade them
+        # instead of creating duplicates (title_hash collision bug fix 2026-01-12)
+        existing_doc_id = lookup_doc_by_title_hash(title, db_conn=pg)
+
+        if existing_doc_id:
+            logger.info(f"Found existing doc by title_hash, upgrading: {existing_doc_id}")
+            doc_id = existing_doc_id
+        else:
+            # Compute deterministic document identity for new documents
+            doc_id = compute_doc_id(
+                title=title,
+                authors=authors,
+                year=year,
+                doi=doi,
+                pmid=pmid,
+                arxiv_id=arxiv_id,
+            )
 
         # Extract passages with page-local provenance
         try:
@@ -1017,7 +1030,7 @@ class UnifiedIngestor:
         concepts = self.extract_concepts(concept_seed)
 
         # 1. Postgres (System of Record) - REQUIRED
-        pg = self._get_postgres()
+        # (pg already obtained earlier for title_hash lookup)
         caps = self._get_pg_capabilities()
         if not pg or not (caps.get("documents") and caps.get("passages")):
             errors.append("Postgres documents/passages tables unavailable - aborting ingest")
@@ -1206,6 +1219,283 @@ class UnifiedIngestor:
             ingestion_method=ingestion_method,
             source_item_id=source_item_id,
             errors=errors
+        )
+
+    def ingest_pdf_incremental(
+        self,
+        pdf_path: str,
+        pmid: Optional[str] = None,
+        ingest_run_id: Optional[str] = None,
+    ) -> IngestResult:
+        """
+        Incremental PDF ingestion using Gemini API for concept extraction.
+
+        Writes to ALL 3 databases:
+        - Postgres: documents + passages
+        - ChromaDB: Passage vectors (BGE-M3)
+        - Neo4j: Paper node + concept links (MERGE - incremental, not full rebuild)
+
+        Updates sync timestamps (vector_synced_at, graph_synced_at).
+
+        Args:
+            pdf_path: Path to PDF file
+            pmid: Optional PMID (extracted from filename if not provided)
+            ingest_run_id: Optional run ID for tracking
+
+        Returns:
+            IngestResult with ingestion status
+        """
+        from lib.gemini_batch import (
+            BatchRequest, run_sync_batch, parse_concept_response, build_extraction_prompt
+        )
+        from datetime import datetime
+
+        pdf_path = str(pdf_path)
+        errors = []
+
+        auto_run = ingest_run_id is None
+        ingest_run_id = self._ensure_ingest_run(ingest_run_id)
+
+        def finalize(status: str, chunks_added: int = 0, concepts_count: int = 0):
+            if auto_run:
+                self._finalize_ingest_run(
+                    ingest_run_id, status,
+                    counts={"source_items_processed": 1, "chunks_added": chunks_added, "concepts_linked": concepts_count},
+                    errors=errors,
+                )
+
+        # Extract metadata
+        metadata = self._extract_pdf_metadata(pdf_path)
+        title = metadata.get("title", Path(pdf_path).stem)
+        authors = metadata.get("authors", [])
+        year = metadata.get("year", 0)
+        doi = metadata.get("doi")
+
+        # Use provided PMID or extract from filename (common pattern: 40954300.pdf)
+        if pmid is None:
+            pmid = metadata.get("pmid")
+            if not pmid:
+                stem = Path(pdf_path).stem
+                if stem.isdigit():
+                    pmid = stem
+
+        arxiv_id = metadata.get("arxiv_id")
+        file_hash = metadata.get("file_hash", self._file_hash(pdf_path))
+
+        # Get postgres connection early for title_hash lookup
+        pg = self._get_postgres()
+
+        # Check for existing document by title_hash (handles citation node collision)
+        # Uses consistent normalization from doc_identity module
+        existing_doc_id = lookup_doc_by_title_hash(title, db_conn=pg)
+
+        # Use existing doc_id if found, otherwise compute deterministic identity
+        if existing_doc_id:
+            doc_id = existing_doc_id
+        else:
+            doc_id = compute_doc_id(
+                title=title, authors=authors, year=year,
+                doi=doi, pmid=pmid, arxiv_id=arxiv_id,
+            )
+
+        # Extract passages with page-local provenance
+        try:
+            passages = self._pdf_parser.extract_with_provenance(pdf_path, doc_id)
+        except Exception as e:
+            errors.append(f"Enhanced parsing failed: {e}")
+            finalize("failed")
+            return IngestResult(
+                artifact_id="", title=title, artifact_type="paper",
+                chunks_added=0, concepts_linked=[], neo4j_node_created=False,
+                postgres_synced=False, ingest_run_id=ingest_run_id, errors=errors,
+            )
+
+        if not passages:
+            errors.append("No passages extracted")
+            finalize("failed")
+            return IngestResult(
+                artifact_id=file_hash, title=title, artifact_type="paper",
+                chunks_added=0, concepts_linked=[], neo4j_node_created=False,
+                postgres_synced=False, ingest_run_id=ingest_run_id, errors=errors,
+            )
+
+        logger.info(f"Extracted {len(passages)} passages from {Path(pdf_path).name}")
+
+        # Extract concepts using Gemini API (batch over first few passages)
+        concepts = []
+        try:
+            # Use title + first 3 passages for concept extraction
+            seed_texts = [f"Title: {title}"]
+            for p in passages[:3]:
+                seed_texts.append(p.passage_text[:800])
+            combined_seed = "\n\n".join(seed_texts)
+
+            # Single Gemini request for concept extraction
+            requests = [BatchRequest(custom_id=str(doc_id), text=combined_seed)]
+            results = run_sync_batch(requests, max_output_tokens=512, delay_between_requests=0.1)
+
+            if results and results[0].get("concepts"):
+                for c in results[0]["concepts"]:
+                    name = c.get("name", "").lower().strip()
+                    if name:
+                        concepts.append(name)
+            logger.info(f"Gemini extracted {len(concepts)} concepts")
+        except Exception as e:
+            logger.warning(f"Gemini concept extraction failed: {e}, using fallback")
+            # Fallback to local extractor
+            concept_seed = f"{title}\n\n{passages[0].passage_text}"
+            concepts = self.extract_concepts(concept_seed)
+
+        # 1. POSTGRES: Upsert document + passages
+        # (pg already obtained earlier for title_hash lookup)
+        caps = self._get_pg_capabilities()
+        if not pg or not (caps.get("documents") and caps.get("passages")):
+            errors.append("Postgres unavailable")
+            finalize("failed")
+            return IngestResult(
+                artifact_id=file_hash, title=title, artifact_type="paper",
+                chunks_added=0, concepts_linked=concepts, neo4j_node_created=False,
+                postgres_synced=False, ingest_run_id=ingest_run_id, errors=errors,
+            )
+
+        try:
+            upsert_document(
+                doc_id=doc_id, title=title, authors=authors, year=year,
+                doi=doi, pmid=pmid, arxiv_id=arxiv_id,
+                parser_version=passages[0].parser_version if passages else None,
+                db_conn=pg,
+            )
+        except Exception as e:
+            errors.append(f"Postgres document upsert failed: {e}")
+            finalize("failed")
+            return IngestResult(
+                artifact_id=file_hash, title=title, artifact_type="paper",
+                chunks_added=0, concepts_linked=concepts, neo4j_node_created=False,
+                postgres_synced=False, ingest_run_id=ingest_run_id, errors=errors,
+            )
+
+        passages_ok, passages_error = self._sync_postgres_passages(passages)
+        if not passages_ok:
+            errors.append(f"Postgres passages insert failed: {passages_error}")
+            finalize("failed")
+            return IngestResult(
+                artifact_id=file_hash, title=title, artifact_type="paper",
+                chunks_added=0, concepts_linked=concepts, neo4j_node_created=False,
+                postgres_synced=False, ingest_run_id=ingest_run_id, errors=errors,
+            )
+
+        logger.info(f"Postgres: {len(passages)} passages written")
+
+        # 2. CHROMADB: Embed and upsert passages
+        vector_synced = False
+        try:
+            coll = self._get_papers_collection()
+            texts = [p.passage_text for p in passages]
+            embeddings = self._encode_texts(texts)
+
+            metadatas = []
+            for p in passages:
+                meta = {
+                    "doc_id": str(doc_id),
+                    "title": title,
+                    "doi": doi or "",
+                    "pmid": pmid or "",
+                    "year": year or 0,
+                    "page_num": p.page_num,
+                    "section": p.section,
+                    "concepts": ",".join(concepts),
+                    "parser_version": p.parser_version or "",
+                    "source_model": "bge_m3_v1" if "bge-m3" in EMBEDDING_MODEL.lower() else EMBEDDING_MODEL,
+                }
+                metadatas.append(meta)
+
+            ids = [f"p_{p.passage_id}" for p in passages]
+            coll.upsert(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
+            vector_synced = True
+            logger.info(f"ChromaDB: {len(passages)} passages indexed")
+        except Exception as e:
+            errors.append(f"ChromaDB error: {e}")
+
+        # 3. NEO4J: MERGE paper node + concept links (INCREMENTAL)
+        neo4j_created = False
+        try:
+            driver = self._get_neo4j()
+            with driver.session() as session:
+                # MERGE paper node (incremental - doesn't require full rebuild)
+                session.run(
+                    """
+                    MERGE (p:Paper {doc_id: $doc_id})
+                    SET p.title = $title,
+                        p.year = $year,
+                        p.doi = $doi,
+                        p.pmid = $pmid,
+                        p.path = $path,
+                        p.ingested_at = datetime(),
+                        p.ingest_run_id = $run_id,
+                        p.passage_count = $passage_count
+                    """,
+                    doc_id=str(doc_id), title=title, year=year, doi=doi,
+                    pmid=pmid, path=pdf_path, run_id=ingest_run_id,
+                    passage_count=len(passages),
+                )
+
+                # MERGE concept links
+                for concept in concepts:
+                    session.run(
+                        """
+                        MATCH (p:Paper {doc_id: $doc_id})
+                        MERGE (c:CONCEPT {name: $concept})
+                        MERGE (p)-[r:MENTIONS]->(c)
+                        ON CREATE SET r.source_model = 'gemini_incremental_v1', r.created_at = datetime()
+                        ON MATCH SET r.updated_at = datetime()
+                        """,
+                        doc_id=str(doc_id), concept=concept,
+                    )
+
+                neo4j_created = True
+                logger.info(f"Neo4j: Paper node + {len(concepts)} concept links created")
+        except Exception as e:
+            errors.append(f"Neo4j error: {e}")
+
+        # 4. UPDATE SYNC TIMESTAMPS
+        try:
+            cursor = pg.cursor()
+            now = datetime.utcnow()
+
+            updates = []
+            if vector_synced:
+                updates.append("vector_synced_at = %s")
+            if neo4j_created:
+                updates.append("graph_synced_at = %s")
+
+            if updates:
+                sql = f"UPDATE documents SET {', '.join(updates)} WHERE doc_id = %s"
+                params = []
+                if vector_synced:
+                    params.append(now)
+                if neo4j_created:
+                    params.append(now)
+                params.append(str(doc_id))
+                cursor.execute(sql, params)
+                pg.commit()
+                logger.info(f"Sync timestamps updated")
+            cursor.close()
+        except Exception as e:
+            errors.append(f"Sync timestamp update failed: {e}")
+
+        status = "committed" if not errors else "partial" if len(passages) > 0 else "failed"
+        finalize(status, chunks_added=len(passages), concepts_count=len(concepts))
+
+        return IngestResult(
+            artifact_id=str(doc_id),
+            title=title,
+            artifact_type="paper",
+            chunks_added=len(passages),
+            concepts_linked=concepts,
+            neo4j_node_created=neo4j_created,
+            postgres_synced=True,
+            ingest_run_id=ingest_run_id,
+            errors=errors,
         )
 
     def ingest_code(

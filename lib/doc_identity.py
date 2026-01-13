@@ -212,12 +212,18 @@ def get_or_create_doc_id(
     doi: Optional[str] = None,
     pmid: Optional[str] = None,
     arxiv_id: Optional[str] = None,
+    db_conn=None,
     **kwargs
 ) -> uuid.UUID:
     """
     Convenience function: compute doc_id and upsert in one call.
 
     This is the primary entry point for most ingestion code.
+
+    IMPORTANT: Checks title_hash FIRST to handle citation node upgrades.
+    If a document exists with same title_hash but different doc_id (e.g., citation
+    node without DOI), we UPGRADE that record with new identifiers rather than
+    creating a duplicate.
 
     Args:
         title: Paper title
@@ -226,14 +232,69 @@ def get_or_create_doc_id(
         doi: DOI if known
         pmid: PubMed ID if known
         arxiv_id: arXiv ID if known
+        db_conn: Database connection (optional)
         **kwargs: Additional fields passed to upsert_document
 
     Returns:
-        Deterministic doc_id
+        doc_id (existing if title_hash matched, new if not)
     """
-    doc_id = compute_doc_id(title, authors, year, doi, pmid, arxiv_id)
-    upsert_document(doc_id, title, authors, year, doi, pmid, arxiv_id, **kwargs)
-    return doc_id
+    # Check if document already exists by title_hash
+    existing_doc_id = lookup_doc_by_title_hash(title, db_conn=db_conn)
+
+    if existing_doc_id:
+        # Document exists - upgrade it with new identifiers
+        logger.info(f"Found existing doc by title_hash, upgrading: {existing_doc_id}")
+        upsert_document(
+            existing_doc_id, title, authors, year, doi, pmid, arxiv_id,
+            db_conn=db_conn, **kwargs
+        )
+        return existing_doc_id
+    else:
+        # No existing document - compute new doc_id
+        doc_id = compute_doc_id(title, authors, year, doi, pmid, arxiv_id)
+        upsert_document(doc_id, title, authors, year, doi, pmid, arxiv_id,
+                       db_conn=db_conn, **kwargs)
+        return doc_id
+
+
+def lookup_doc_by_title_hash(
+    title: str,
+    db_conn=None
+) -> Optional[uuid.UUID]:
+    """
+    Look up doc_id by title_hash.
+
+    This is critical for handling citation nodes that exist without DOI/PMID.
+    When we later ingest the actual PDF (with DOI), we need to find and upgrade
+    the existing record rather than creating a duplicate.
+
+    Args:
+        title: Paper title (will be normalized and hashed)
+        db_conn: Database connection
+
+    Returns:
+        doc_id if found, None otherwise
+    """
+    close_conn = False
+    if db_conn is None:
+        db_conn = psycopg2.connect("dbname=polymath user=polymath host=/var/run/postgresql")
+        close_conn = True
+
+    cursor = db_conn.cursor()
+
+    try:
+        title_hash = hashlib.sha256(normalize_title(title).encode()).hexdigest()[:16]
+        cursor.execute("""
+            SELECT doc_id FROM documents WHERE title_hash = %s
+        """, (title_hash,))
+        result = cursor.fetchone()
+        if result:
+            return uuid.UUID(result[0])
+        return None
+    finally:
+        cursor.close()
+        if close_conn:
+            db_conn.close()
 
 
 def lookup_doc_by_identifier(

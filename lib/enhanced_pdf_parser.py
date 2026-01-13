@@ -102,8 +102,8 @@ class EnhancedPDFParser:
         passages = []
         with pdfplumber.open(pdf_path) as pdf:
             for page_num, page in enumerate(pdf.pages, start=1):
-                # Extract text
-                page_text = page.extract_text() or ""
+                # Extract text and strip NUL characters (postgres incompatible)
+                page_text = (page.extract_text() or "").replace('\x00', '')
                 if not page_text.strip():
                     continue  # Skip empty pages
 
@@ -132,7 +132,7 @@ class EnhancedPDFParser:
 
         for page_num in range(1, len(doc) + 1):
             page = doc[page_num - 1]
-            page_text = page.get_text()
+            page_text = page.get_text().replace('\x00', '')  # Strip NUL chars
 
             if not page_text.strip():
                 continue
@@ -163,7 +163,7 @@ class EnhancedPDFParser:
         images = convert_from_path(pdf_path)
 
         for page_num, image in enumerate(images, start=1):
-            page_text = pytesseract.image_to_string(image)
+            page_text = pytesseract.image_to_string(image).replace('\x00', '')  # Strip NUL
 
             if not page_text.strip():
                 continue
