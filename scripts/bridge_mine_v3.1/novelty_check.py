@@ -1,305 +1,256 @@
 #!/usr/bin/env python3
 """
-Novelty Check for Bridge Mine v3.1
+Novelty Check for Transfer Candidates
 
-Checks whether a cross-domain bridge is:
-- Mode A (EXISTING): Explicit co-mention in literature → useful for lit review, not novel
-- Mode B (NOVEL_CANDIDATE): No direct "{method} + spatial transcriptomics" hits → actual discovery
-
-Uses PubMed and Semantic Scholar to verify novelty.
+Checks PubMed/Semantic Scholar for prior art combining method + spatial transcriptomics.
 """
 
-import json
 import os
 import sys
+import json
 import time
-import re
-import urllib.parse
-from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass
-from enum import Enum
-
-sys.path.insert(0, '/home/user/polymath-repo')
-
 import requests
+from typing import List, Dict, Tuple
+
+# Top transfer candidates from data analysis
+TRANSFER_CANDIDATES = [
+    {
+        "method": "latent_diffusion_models",
+        "display": "Latent Diffusion Models (LDMs)",
+        "spatial_pct": 5.4,
+        "total_papers": 37,
+        "transfer_hypothesis": "Use LDMs to generate high-resolution spatial gene expression from H&E images, similar to how Stable Diffusion generates images from text",
+        "search_terms": ["latent diffusion spatial transcriptomics", "LDM gene expression", "stable diffusion spatial omics"]
+    },
+    {
+        "method": "denoising_diffusion_probabilistic_models",
+        "display": "Denoising Diffusion Probabilistic Models (DDPMs)",
+        "spatial_pct": 7.7,
+        "total_papers": 39,
+        "transfer_hypothesis": "Apply DDPMs to impute missing gene expression values in sparse spatial transcriptomics data",
+        "search_terms": ["DDPM spatial transcriptomics", "diffusion model gene expression imputation", "denoising diffusion spatial omics"]
+    },
+    {
+        "method": "inpainting",
+        "display": "Image Inpainting",
+        "spatial_pct": 9.7,
+        "total_papers": 31,
+        "transfer_hypothesis": "Treat spatial gene expression as images and use inpainting techniques to fill missing spots/cells",
+        "search_terms": ["inpainting spatial transcriptomics", "gene expression inpainting", "spatial omics inpainting"]
+    },
+    {
+        "method": "missing_value_imputation",
+        "display": "Missing Value Imputation (classical)",
+        "spatial_pct": 9.7,
+        "total_papers": 31,
+        "transfer_hypothesis": "Apply matrix completion/imputation methods to sparse ST data considering spatial structure",
+        "search_terms": ["imputation spatial transcriptomics", "matrix completion spatial omics", "missing value spatial gene expression"]
+    },
+    {
+        "method": "score_matching",
+        "display": "Score Matching / Score-Based Models",
+        "spatial_pct": 0.0,
+        "total_papers": 20,
+        "transfer_hypothesis": "Use score-based generative models to learn spatial gene expression distributions and sample novel patterns",
+        "search_terms": ["score matching spatial transcriptomics", "score-based model gene expression", "energy-based model spatial omics"]
+    },
+    {
+        "method": "neural_radiance_field",
+        "display": "Neural Radiance Fields (NeRF)",
+        "spatial_pct": 0.0,
+        "total_papers": 15,
+        "transfer_hypothesis": "Use NeRF-style implicit representations to reconstruct 3D gene expression from serial sections",
+        "search_terms": ["NeRF spatial transcriptomics", "neural radiance field tissue", "implicit neural representation spatial omics"]
+    },
+    {
+        "method": "optical_flow",
+        "display": "Optical Flow Estimation",
+        "spatial_pct": 22.6,
+        "total_papers": 31,
+        "transfer_hypothesis": "Use optical flow to register serial tissue sections for 3D reconstruction",
+        "search_terms": ["optical flow serial section", "optical flow tissue registration", "optical flow spatial transcriptomics"]
+    },
+    {
+        "method": "compressed_sensing",
+        "display": "Compressed Sensing",
+        "spatial_pct": 27.7,
+        "total_papers": 47,
+        "transfer_hypothesis": "Apply compressed sensing to recover full gene expression from sub-sampled spatial measurements",
+        "search_terms": ["compressed sensing spatial transcriptomics", "compressed sensing gene expression", "sparse recovery spatial omics"]
+    },
+    {
+        "method": "deformable_registration",
+        "display": "Deformable Registration",
+        "spatial_pct": 21.1,
+        "total_papers": 38,
+        "transfer_hypothesis": "Use deformable registration to align spatial transcriptomics data across different tissue sections/patients",
+        "search_terms": ["deformable registration spatial transcriptomics", "non-rigid registration spatial omics", "diffeomorphic registration gene expression"]
+    },
+    {
+        "method": "momentum_contrast",
+        "display": "Momentum Contrast (MoCo)",
+        "spatial_pct": 0.0,
+        "total_papers": 35,
+        "transfer_hypothesis": "Apply MoCo contrastive learning to learn self-supervised representations of spatial gene expression patterns",
+        "search_terms": ["MoCo spatial transcriptomics", "contrastive learning spatial omics", "momentum contrast gene expression"]
+    }
+]
 
 
-class NoveltyMode(str, Enum):
-    EXISTING = "EXISTING"                 # Found in literature (Mode A)
-    NOVEL_CANDIDATE = "NOVEL_CANDIDATE"   # Not found (Mode B)
-    NEEDS_REVIEW = "NEEDS_REVIEW"         # Ambiguous results
-    CHECK_FAILED = "CHECK_FAILED"         # API error
+def check_pubmed(query: str) -> Tuple[int, List[str]]:
+    """Check PubMed for papers matching query."""
+    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    params = {
+        "db": "pubmed",
+        "term": query,
+        "retmax": 5,
+        "retmode": "json"
+    }
 
-
-@dataclass
-class NoveltyResult:
-    """Result of novelty check."""
-    mode: NoveltyMode
-    pubmed_hits: int
-    s2_hits: int
-    query_used: str
-    evidence_urls: List[str]  # URLs to found papers (if EXISTING)
-    confidence: float
-    rationale: str
-
-
-# PubMed E-utilities
-PUBMED_SEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-PUBMED_SUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-
-# Semantic Scholar
-S2_SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
-
-
-def normalize_concept_for_search(concept: str) -> str:
-    """Convert concept name to search-friendly form."""
-    # Replace underscores with spaces
-    term = concept.replace('_', ' ')
-    # Remove special characters
-    term = re.sub(r'[^\w\s-]', '', term)
-    return term.strip()
-
-
-def build_combined_query(
-    source_concept: str,
-    target_domain: str = "spatial transcriptomics"
-) -> str:
-    """
-    Build a query checking for co-mention of source method and target domain.
-    """
-    source = normalize_concept_for_search(source_concept)
-    target = normalize_concept_for_search(target_domain)
-
-    # Quote exact phrases
-    return f'"{source}" AND "{target}"'
-
-
-def search_pubmed(query: str, max_results: int = 5) -> Tuple[int, List[dict]]:
-    """
-    Search PubMed for papers matching query.
-
-    Returns:
-        (total_count, list of paper metadata dicts)
-    """
     try:
-        # Search
-        params = {
-            'db': 'pubmed',
-            'term': query,
-            'retmax': max_results,
-            'retmode': 'json',
-            'usehistory': 'n'
-        }
-
-        response = requests.get(PUBMED_SEARCH_URL, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-
-        result = data.get('esearchresult', {})
-        total = int(result.get('count', 0))
-        ids = result.get('idlist', [])
-
-        if not ids:
-            return total, []
-
-        # Get summaries
-        summary_params = {
-            'db': 'pubmed',
-            'id': ','.join(ids),
-            'retmode': 'json'
-        }
-
-        time.sleep(0.3)  # Rate limiting
-        summary_response = requests.get(PUBMED_SUMMARY_URL, params=summary_params, timeout=10)
-        summary_response.raise_for_status()
-        summary_data = summary_response.json()
-
-        papers = []
-        for pmid in ids:
-            paper_data = summary_data.get('result', {}).get(pmid, {})
-            if paper_data:
-                papers.append({
-                    'pmid': pmid,
-                    'title': paper_data.get('title', ''),
-                    'year': paper_data.get('pubdate', '')[:4],
-                    'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-                })
-
-        return total, papers
-
+        resp = requests.get(base_url, params=params, timeout=10)
+        data = resp.json()
+        count = int(data.get("esearchresult", {}).get("count", 0))
+        ids = data.get("esearchresult", {}).get("idlist", [])
+        return count, ids
     except Exception as e:
-        print(f"    PubMed search error: {e}")
+        print(f"  PubMed error: {e}")
         return -1, []
 
 
-def search_semantic_scholar(query: str, max_results: int = 5) -> Tuple[int, List[dict]]:
-    """
-    Search Semantic Scholar for papers matching query.
+def check_semantic_scholar(query: str) -> Tuple[int, List[Dict]]:
+    """Check Semantic Scholar for papers matching query."""
+    base_url = "https://api.semanticscholar.org/graph/v1/paper/search"
+    params = {
+        "query": query,
+        "limit": 5,
+        "fields": "title,year,citationCount"
+    }
 
-    Returns:
-        (total_count, list of paper metadata dicts)
-    """
     try:
-        params = {
-            'query': query,
-            'limit': max_results,
-            'fields': 'title,year,url,paperId'
-        }
-
-        response = requests.get(S2_SEARCH_URL, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-
-        total = data.get('total', 0)
-        papers = []
-
-        for paper in data.get('data', []):
-            papers.append({
-                'paper_id': paper.get('paperId', ''),
-                'title': paper.get('title', ''),
-                'year': str(paper.get('year', '')),
-                'url': paper.get('url', f"https://www.semanticscholar.org/paper/{paper.get('paperId', '')}")
-            })
-
+        resp = requests.get(base_url, params=params, timeout=10)
+        if resp.status_code == 429:
+            print("  S2 rate limited, waiting...")
+            time.sleep(5)
+            return -1, []
+        data = resp.json()
+        total = data.get("total", 0)
+        papers = data.get("data", [])
         return total, papers
-
     except Exception as e:
-        print(f"    Semantic Scholar search error: {e}")
+        print(f"  S2 error: {e}")
         return -1, []
 
 
-def check_novelty(
-    source_concept: str,
-    target_concept: str,
-    target_domain: str = "spatial transcriptomics",
-    min_hits_for_existing: int = 3
-) -> NoveltyResult:
-    """
-    Check if a source→target bridge is novel or already exists in literature.
+def run_novelty_check():
+    """Run novelty check on all transfer candidates."""
+    print("="*70)
+    print("NOVELTY CHECK FOR TRANSFER CANDIDATES")
+    print("="*70)
 
-    Args:
-        source_concept: The source method/technique
-        target_concept: The target problem/application
-        target_domain: The target domain (default: spatial transcriptomics)
-        min_hits_for_existing: Minimum combined hits to mark as EXISTING
+    results = []
 
-    Returns:
-        NoveltyResult with mode and evidence
-    """
-    # Build search query
-    query = build_combined_query(source_concept, target_domain)
+    for i, candidate in enumerate(TRANSFER_CANDIDATES):
+        print(f"\n{i+1}. {candidate['display']}")
+        print(f"   Spatial penetration: {candidate['spatial_pct']}%")
+        print(f"   Hypothesis: {candidate['transfer_hypothesis'][:80]}...")
 
-    # Search PubMed
-    pubmed_total, pubmed_papers = search_pubmed(query)
-    time.sleep(0.5)  # Rate limiting between APIs
+        novelty_score = 100  # Start with max novelty
+        prior_art = []
 
-    # Search Semantic Scholar
-    s2_total, s2_papers = search_semantic_scholar(query)
+        for search_term in candidate['search_terms']:
+            # Check PubMed
+            pm_count, pm_ids = check_pubmed(search_term)
+            if pm_count > 0:
+                print(f"   PubMed '{search_term}': {pm_count} results")
+                novelty_score -= min(30, pm_count * 5)
+                prior_art.append(f"PubMed: {pm_count}")
 
-    # Combine results
-    all_urls = []
-    for p in pubmed_papers:
-        all_urls.append(p.get('url', ''))
-    for p in s2_papers:
-        all_urls.append(p.get('url', ''))
-    all_urls = list(set(filter(None, all_urls)))[:5]  # Dedupe, limit
+            # Check Semantic Scholar
+            s2_count, s2_papers = check_semantic_scholar(search_term)
+            if s2_count > 0:
+                print(f"   S2 '{search_term}': {s2_count} results")
+                novelty_score -= min(30, s2_count * 2)
+                if s2_papers:
+                    for p in s2_papers[:2]:
+                        prior_art.append(f"S2: {p.get('title', 'Unknown')[:50]}...")
 
-    # Handle API errors
-    if pubmed_total < 0 and s2_total < 0:
-        return NoveltyResult(
-            mode=NoveltyMode.CHECK_FAILED,
-            pubmed_hits=0,
-            s2_hits=0,
-            query_used=query,
-            evidence_urls=[],
-            confidence=0.0,
-            rationale="Both PubMed and Semantic Scholar APIs failed"
-        )
+            time.sleep(0.5)  # Rate limiting
 
-    # Use whichever worked, or average
-    pubmed_count = max(0, pubmed_total)
-    s2_count = max(0, s2_total)
-    combined_hits = pubmed_count + s2_count
+        novelty_score = max(0, novelty_score)
 
-    # Classify
-    if combined_hits >= min_hits_for_existing:
-        return NoveltyResult(
-            mode=NoveltyMode.EXISTING,
-            pubmed_hits=pubmed_count,
-            s2_hits=s2_count,
-            query_used=query,
-            evidence_urls=all_urls,
-            confidence=min(1.0, combined_hits / 10),
-            rationale=f"Found {combined_hits} papers with explicit co-mention - not novel"
-        )
+        result = {
+            **candidate,
+            "novelty_score": novelty_score,
+            "prior_art_found": len(prior_art) > 0,
+            "prior_art": prior_art,
+            "recommendation": "INVESTIGATE" if novelty_score >= 50 else "EXISTING" if novelty_score >= 20 else "WELL-STUDIED"
+        }
+        results.append(result)
 
-    elif combined_hits == 0:
-        return NoveltyResult(
-            mode=NoveltyMode.NOVEL_CANDIDATE,
-            pubmed_hits=0,
-            s2_hits=0,
-            query_used=query,
-            evidence_urls=[],
-            confidence=0.9,
-            rationale="No direct co-mention found - novel transfer candidate"
-        )
+        if novelty_score >= 70:
+            print(f"   ✓ HIGH NOVELTY ({novelty_score}/100) - Potential discovery!")
+        elif novelty_score >= 40:
+            print(f"   ~ MEDIUM NOVELTY ({novelty_score}/100) - Some prior work exists")
+        else:
+            print(f"   ✗ LOW NOVELTY ({novelty_score}/100) - Well-studied area")
 
-    else:  # 1-2 hits
-        return NoveltyResult(
-            mode=NoveltyMode.NEEDS_REVIEW,
-            pubmed_hits=pubmed_count,
-            s2_hits=s2_count,
-            query_used=query,
-            evidence_urls=all_urls,
-            confidence=0.5,
-            rationale=f"Found {combined_hits} papers - manual review needed to assess novelty"
-        )
+    # Sort by novelty score
+    results.sort(key=lambda x: -x['novelty_score'])
 
+    # Save results
+    output_dir = '/home/user/work/polymax/reports/bridge_mine_v4_a6_bucket'
+    os.makedirs(output_dir, exist_ok=True)
 
-def check_bridge_novelty(bridge_info: dict) -> NoveltyResult:
-    """
-    Check novelty for a bridge given its info dict.
-    """
-    source = bridge_info.get('source_concept', '')
-    target = bridge_info.get('target_concept', '')
+    output_file = os.path.join(output_dir, 'TOP10_GAPS_WITH_NOVELTY.json')
+    with open(output_file, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"\n\nSaved to {output_file}")
 
-    return check_novelty(source, target)
+    # Generate summary
+    print("\n" + "="*70)
+    print("TOP 10 TRANSFER OPPORTUNITIES (by Novelty)")
+    print("="*70)
 
+    for i, r in enumerate(results):
+        status = "🎯" if r['novelty_score'] >= 50 else "📚"
+        print(f"\n{i+1}. {status} {r['display']}")
+        print(f"   Novelty: {r['novelty_score']}/100 | Spatial: {r['spatial_pct']}%")
+        print(f"   {r['transfer_hypothesis']}")
+        print(f"   Recommendation: {r['recommendation']}")
 
-def main():
-    """Test novelty checking."""
+    # Generate markdown report
+    report_file = os.path.join(output_dir, 'TOP10_TRANSFER_OPPORTUNITIES.md')
+    with open(report_file, 'w') as f:
+        f.write("# Top 10 Transfer Opportunities for Spatial Transcriptomics\n\n")
+        f.write(f"**Generated**: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write("## Executive Summary\n\n")
+        f.write("These methods have high usage in the literature but low penetration into spatial transcriptomics, ")
+        f.write("representing potential transfer opportunities.\n\n")
 
-    test_cases = [
-        # Likely EXISTING (well-studied area)
-        ("attention mechanism", "image classification"),
+        f.write("| Rank | Method | Novelty | Spatial % | Recommendation |\n")
+        f.write("|------|--------|---------|-----------|----------------|\n")
+        for i, r in enumerate(results):
+            f.write(f"| {i+1} | {r['display']} | {r['novelty_score']}/100 | {r['spatial_pct']}% | {r['recommendation']} |\n")
 
-        # Likely NOVEL_CANDIDATE (unusual transfer)
-        ("tomographic imaging", "spatial transcriptomics"),
+        f.write("\n## Detailed Analysis\n\n")
+        for i, r in enumerate(results):
+            f.write(f"### {i+1}. {r['display']}\n\n")
+            f.write(f"- **Novelty Score**: {r['novelty_score']}/100\n")
+            f.write(f"- **Current Spatial Penetration**: {r['spatial_pct']}%\n")
+            f.write(f"- **Total Papers in Corpus**: {r['total_papers']}\n")
+            f.write(f"- **Recommendation**: {r['recommendation']}\n\n")
+            f.write(f"**Transfer Hypothesis**: {r['transfer_hypothesis']}\n\n")
+            if r['prior_art']:
+                f.write("**Prior Art Found**:\n")
+                for pa in r['prior_art'][:3]:
+                    f.write(f"- {pa}\n")
+            f.write("\n---\n\n")
 
-        # Possibly NEEDS_REVIEW
-        ("contrastive learning", "cell segmentation"),
+    print(f"\nSaved markdown report to {report_file}")
 
-        # Very niche
-        ("learned primal dual", "spatial transcriptomics"),
-    ]
-
-    print("Novelty Check Tests:\n")
-    for source, target in test_cases:
-        print(f"Checking: {source} → {target}")
-        result = check_novelty(source, target)
-        print(f"  MODE: {result.mode.value}")
-        print(f"  PubMed hits: {result.pubmed_hits}")
-        print(f"  S2 hits: {result.s2_hits}")
-        print(f"  Query: {result.query_used}")
-        print(f"  Confidence: {result.confidence:.2f}")
-        print(f"  Rationale: {result.rationale}")
-        if result.evidence_urls:
-            print(f"  Evidence URLs:")
-            for url in result.evidence_urls[:3]:
-                print(f"    - {url}")
-        print()
-        time.sleep(1)  # Rate limiting
+    return results
 
 
 if __name__ == "__main__":
-    main()
+    run_novelty_check()
