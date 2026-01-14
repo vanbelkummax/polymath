@@ -20,7 +20,6 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 CHROMADB_PATH = "/home/user/work/polymax/chromadb/polymath_v2"
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "polymathic2026"
 PROGRESS_FILE = "/home/user/work/polymax/ingest_ocr_turbo_progress.json"
 
 

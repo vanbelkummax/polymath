@@ -10,10 +10,10 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+from lib.config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 
 CHROMA_PATH = "/home/user/work/polymax/chromadb/polymath_v2"
 NEO4J_URI = "bolt://localhost:7687"
-NEO4J_PASSWORD = "polymathic2026"
 
 # Cross-domain concepts
 CROSS_DOMAIN_CONCEPTS = {

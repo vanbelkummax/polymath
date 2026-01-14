@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 # Configuration - import from centralized config
@@ -1248,7 +1248,7 @@ class UnifiedIngestor:
         from lib.gemini_batch import (
             BatchRequest, run_sync_batch, parse_concept_response, build_extraction_prompt
         )
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         pdf_path = str(pdf_path)
         errors = []
@@ -1460,7 +1460,7 @@ class UnifiedIngestor:
         # 4. UPDATE SYNC TIMESTAMPS
         try:
             cursor = pg.cursor()
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             updates = []
             if vector_synced:

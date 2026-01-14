@@ -21,7 +21,6 @@ import fitz  # PyMuPDF
 CHROMADB_PATH = "/mnt/z/chromadb_polymax_full"
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "polymathic2026"
 CHUNK_SIZE = 1000  # chars per chunk
 CHUNK_OVERLAP = 200
 

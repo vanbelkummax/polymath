@@ -13,7 +13,7 @@ import json
 import re
 import time
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -117,7 +117,7 @@ def store_concepts(conn, passage_id: str, concepts: dict):
     """Store extracted concepts in database."""
     cur = conn.cursor()
 
-    timestamp = datetime.utcnow()
+    timestamp = datetime.now(timezone.utc)
     extractor = 'gemini-2.0-flash'
 
     for concept_type, concept_list in concepts.items():
@@ -202,7 +202,7 @@ def run_batch_extraction(limit: int = 500, dry_run: bool = False, workers: int =
         if i > 0 and i % 100 == 0 and not dry_run:
             checkpoint = {
                 'checkpoint': i,
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'stats': stats,
                 'results_count': len(results)
             }
@@ -225,7 +225,7 @@ def run_batch_extraction(limit: int = 500, dry_run: bool = False, workers: int =
 
     # Save final results to GCS
     if not dry_run:
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         final_output = {
             'run_id': timestamp,
             'passages_processed': len(passages),

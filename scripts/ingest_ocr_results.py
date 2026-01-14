@@ -24,7 +24,6 @@ OCR_DIR = Path("/home/user/work/polymax/ocr_extracted")
 CHROMADB_PATH = "/home/user/work/polymax/chromadb/polymath_v2"
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "polymathic2026"
 
 CONCEPTS = {
     "deep learning": "deep_learning", "neural network": "neural_network",

@@ -10,7 +10,6 @@ import networkx as nx
 # Configuration
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "polymathic2026"
 
 def run_query(session, query, description):
     """Run a query and display results"""

@@ -12,7 +12,6 @@ from tqdm import tqdm
 
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "polymathic2026"
 
 # Priority 2: Cross-domain concepts to seed
 CROSS_DOMAIN_CONCEPTS = {
