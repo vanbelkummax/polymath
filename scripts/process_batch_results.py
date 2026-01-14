@@ -66,7 +66,8 @@ def store_concepts(conn, passage_id: str, concepts: dict):
     """Store extracted concepts in database."""
     cur = conn.cursor()
     timestamp = datetime.now(timezone.utc)
-    extractor = 'gemini-batch-2.5-flash-lite'
+    extractor_model = 'gemini-2.5-flash-lite'
+    extractor_version = 'batch-v1'
 
     stored = 0
     for concept_type, concept_list in concepts.items():
@@ -76,13 +77,13 @@ def store_concepts(conn, passage_id: str, concepts: dict):
             try:
                 cur.execute("""
                     INSERT INTO passage_concepts
-                    (passage_id, concept_name, concept_type, confidence, extractor_version, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (passage_id, concept_name, concept_type) DO UPDATE
-                    SET confidence = EXCLUDED.confidence,
-                        extractor_version = EXCLUDED.extractor_version,
+                    (passage_id, concept_name, concept_type, confidence, extractor_model, extractor_version, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (passage_id, concept_name, extractor_version) DO UPDATE
+                    SET concept_type = EXCLUDED.concept_type,
+                        confidence = EXCLUDED.confidence,
                         created_at = EXCLUDED.created_at
-                """, (passage_id, concept_name.lower()[:200], concept_type, 0.9, extractor, timestamp))
+                """, (passage_id, concept_name.lower()[:200], concept_type, 0.9, extractor_model, extractor_version, timestamp))
                 stored += 1
             except Exception as e:
                 conn.rollback()
@@ -125,15 +126,85 @@ def process_job_results(job_name: str, dry_run: bool = False):
     if not dry_run:
         conn = psycopg2.connect(POSTGRES_DSN)
 
+    # Load passage mapping from GCS
+    passage_mapping = {}
+    try:
+        # Find the mapping file that matches this job's timestamp
+        storage_client = storage.Client(project=GCP_PROJECT_ID)
+        bucket = storage_client.bucket(GCP_BUCKET)
+        mapping_blobs = list(bucket.list_blobs(prefix='batch_inputs/'))
+        for blob in mapping_blobs:
+            if '_mapping.json' in blob.name:
+                mapping_content = json.loads(blob.download_as_string())
+                passage_mapping = {int(k): v for k, v in mapping_content.items()}
+                print(f"Loaded passage mapping: {len(passage_mapping)} entries")
+                break
+    except Exception as e:
+        print(f"Warning: Could not load passage mapping: {e}")
+
     # Get results
     if hasattr(job, 'dest') and job.dest:
-        if hasattr(job.dest, 'inlined_responses') and job.dest.inlined_responses:
+        # Check for GCS output first (most common for Vertex AI batch)
+        if hasattr(job.dest, 'gcs_uri') and job.dest.gcs_uri:
+            gcs_uri = job.dest.gcs_uri
+            print(f"Results in GCS: {gcs_uri}")
+
+            # Parse gs://bucket/path
+            parts = gcs_uri.replace("gs://", "").split("/", 1)
+            bucket_name = parts[0]
+            prefix = parts[1] if len(parts) > 1 else ""
+
+            storage_client = storage.Client(project=GCP_PROJECT_ID)
+            bucket = storage_client.bucket(bucket_name)
+            blobs = list(bucket.list_blobs(prefix=prefix))
+
+            for blob in blobs:
+                if blob.name.endswith('.jsonl'):
+                    print(f"  Processing: {blob.name}")
+                    content = blob.download_as_string().decode('utf-8')
+
+                    for idx, line in enumerate(content.strip().split('\n')):
+                        if not line:
+                            continue
+                        stats['processed'] += 1
+                        try:
+                            result = json.loads(line)
+
+                            # Extract text from response
+                            text = ""
+                            if 'response' in result:
+                                resp = result['response']
+                                if 'candidates' in resp and resp['candidates']:
+                                    parts_list = resp['candidates'][0].get('content', {}).get('parts', [])
+                                    if parts_list:
+                                        text = parts_list[0].get('text', '')
+
+                            if text:
+                                concepts = parse_concept_response(text)
+                                if concepts:
+                                    total_concepts = sum(len(v) for v in concepts.values())
+                                    stats['concepts'] += total_concepts
+
+                                    # Get passage_id from mapping
+                                    passage_id = None
+                                    if idx in passage_mapping:
+                                        passage_id = passage_mapping[idx].get('passage_id')
+
+                                    if passage_id and conn:
+                                        stored = store_concepts(conn, passage_id, concepts)
+                                        stats['stored'] += stored
+
+                        except Exception as e:
+                            stats['errors'] += 1
+                            if stats['errors'] <= 3:
+                                print(f"  Error processing line {idx}: {e}")
+
+        elif hasattr(job.dest, 'inlined_responses') and job.dest.inlined_responses:
             print(f"Found {len(job.dest.inlined_responses)} inline responses")
 
             for i, resp in enumerate(job.dest.inlined_responses):
                 stats['processed'] += 1
                 try:
-                    # Extract text from response
                     text = ""
                     if hasattr(resp, 'response'):
                         r = resp.response
@@ -147,12 +218,9 @@ def process_job_results(job_name: str, dry_run: bool = False):
                             total_concepts = sum(len(v) for v in concepts.values())
                             stats['concepts'] += total_concepts
 
-                            # Get passage_id from metadata or key
                             passage_id = None
-                            if hasattr(resp, 'metadata') and resp.metadata:
-                                passage_id = resp.metadata.get('passage_id')
-                            elif hasattr(resp, 'key'):
-                                passage_id = resp.key
+                            if i in passage_mapping:
+                                passage_id = passage_mapping[i].get('passage_id')
 
                             if passage_id and conn:
                                 stored = store_concepts(conn, passage_id, concepts)
