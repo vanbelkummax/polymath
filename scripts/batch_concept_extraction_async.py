@@ -89,15 +89,22 @@ def get_passages_needing_concepts(conn, limit: int) -> list:
     return passages
 
 
-def create_jsonl_content(passages: list, model: str = DEFAULT_MODEL) -> str:
-    """Create JSONL content for batch processing."""
+def create_jsonl_content(passages: list, model: str = DEFAULT_MODEL) -> Tuple[str, Dict[str, Dict]]:
+    """Create JSONL content for batch processing.
+
+    Returns:
+        Tuple of (jsonl_content, passage_mapping) where passage_mapping maps
+        line index to passage metadata for result processing.
+    """
     lines = []
-    for passage_id, text, title, doc_id in passages:
+    passage_mapping = {}  # Map line index to passage info
+
+    for idx, (passage_id, text, title, doc_id) in enumerate(passages):
         # Truncate text to 2000 chars for prompt
         truncated_text = text[:2000] if len(text) > 2000 else text
 
+        # Vertex AI batch format: just "request" object, no key/metadata
         request_obj = {
-            "key": str(passage_id),
             "request": {
                 "contents": [{
                     "parts": [{"text": CONCEPT_PROMPT_TEMPLATE.format(text=truncated_text)}],
@@ -107,16 +114,18 @@ def create_jsonl_content(passages: list, model: str = DEFAULT_MODEL) -> str:
                     "temperature": 0.1,
                     "maxOutputTokens": 512
                 }
-            },
-            "metadata": {
-                "passage_id": str(passage_id),
-                "doc_id": str(doc_id),
-                "title": title[:100] if title else ""
             }
         }
         lines.append(json.dumps(request_obj))
 
-    return "\n".join(lines)
+        # Store mapping for result processing
+        passage_mapping[idx] = {
+            "passage_id": str(passage_id),
+            "doc_id": str(doc_id),
+            "title": title[:100] if title else ""
+        }
+
+    return "\n".join(lines), passage_mapping
 
 
 def upload_to_gcs(bucket_name: str, blob_path: str, content: str) -> str:
@@ -153,13 +162,18 @@ def create_async_batch_job(
     """
     timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
 
-    # Create JSONL content
-    jsonl_content = create_jsonl_content(passages, model)
+    # Create JSONL content and passage mapping
+    jsonl_content, passage_mapping = create_jsonl_content(passages, model)
 
-    # Upload to GCS
+    # Upload input JSONL to GCS
     input_path = f"batch_inputs/concepts_{timestamp}.jsonl"
     input_uri = upload_to_gcs(GCP_BUCKET, input_path, jsonl_content)
     print(f"Uploaded input to: {input_uri}")
+
+    # Upload passage mapping for result processing
+    mapping_path = f"batch_inputs/concepts_{timestamp}_mapping.json"
+    upload_to_gcs(GCP_BUCKET, mapping_path, json.dumps(passage_mapping, indent=2))
+    print(f"Uploaded mapping to: gs://{GCP_BUCKET}/{mapping_path}")
 
     # Upload the input file to Gemini Files API
     # For Vertex AI, we use GCS directly as source
