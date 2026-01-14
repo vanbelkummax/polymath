@@ -86,6 +86,23 @@ OPENALEX_EMAIL = os.environ.get("OPENALEX_EMAIL", "polymath@example.com")
 OPENALEX_API_KEY = os.environ.get("OPENALEX_API_KEY", "")
 
 # =============================================================================
+# Google Cloud Platform
+# =============================================================================
+
+GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "fifth-branch-483806-m1")
+GCP_SERVICE_ACCOUNT = os.environ.get(
+    "GCP_SERVICE_ACCOUNT",
+    "/home/user/.gcp/service-account.json"
+)
+GCP_BUCKET = os.environ.get("GCP_BUCKET", "polymath-batch-jobs")
+GEMINI_API_KEY: Optional[str] = os.environ.get("GEMINI_API_KEY")
+VERTEX_API_KEY: Optional[str] = os.environ.get("VERTEX_API_KEY")
+
+# Set GOOGLE_APPLICATION_CREDENTIALS for GCP SDK
+if Path(GCP_SERVICE_ACCOUNT).exists():
+    os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", GCP_SERVICE_ACCOUNT)
+
+# =============================================================================
 # Rate Limits (requests per second)
 # =============================================================================
 
