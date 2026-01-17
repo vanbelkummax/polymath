@@ -126,19 +126,35 @@ def process_job_results(job_name: str, dry_run: bool = False):
     if not dry_run:
         conn = psycopg2.connect(POSTGRES_DSN)
 
-    # Load passage mapping from GCS
+    # Load passage mapping from GCS - must match the job's timestamp
     passage_mapping = {}
     try:
-        # Find the mapping file that matches this job's timestamp
+        # Extract timestamp from job info file to find matching mapping
         storage_client = storage.Client(project=GCP_PROJECT_ID)
         bucket = storage_client.bucket(GCP_BUCKET)
-        mapping_blobs = list(bucket.list_blobs(prefix='batch_inputs/'))
-        for blob in mapping_blobs:
-            if '_mapping.json' in blob.name:
-                mapping_content = json.loads(blob.download_as_string())
-                passage_mapping = {int(k): v for k, v in mapping_content.items()}
-                print(f"Loaded passage mapping: {len(passage_mapping)} entries")
+
+        # Find the job info file that contains this job_name
+        job_timestamp = None
+        job_blobs = list(bucket.list_blobs(prefix='batch_jobs/'))
+        for blob in job_blobs:
+            content = json.loads(blob.download_as_string())
+            if content.get('job_name') == job_name:
+                job_timestamp = content.get('created_at')
+                print(f"Found job timestamp: {job_timestamp}")
                 break
+
+        if job_timestamp:
+            # Load the matching mapping file
+            mapping_path = f"batch_inputs/concepts_{job_timestamp}_mapping.json"
+            mapping_blob = bucket.blob(mapping_path)
+            if mapping_blob.exists():
+                mapping_content = json.loads(mapping_blob.download_as_string())
+                passage_mapping = {int(k): v for k, v in mapping_content.items()}
+                print(f"Loaded passage mapping: {len(passage_mapping)} entries from {mapping_path}")
+            else:
+                print(f"Warning: Mapping file not found: {mapping_path}")
+        else:
+            print("Warning: Could not find job timestamp")
     except Exception as e:
         print(f"Warning: Could not load passage mapping: {e}")
 
